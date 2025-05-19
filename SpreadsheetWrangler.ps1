@@ -792,16 +792,359 @@ function Combine-Spreadsheets {
     }
 }
 
+# Function to process SKU list and create GSxx spreadsheets
+function Process-SKUList {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CombinedSpreadsheetPath,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$SKUListPath,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$FinalOutputPath
+    )
+    
+    try {
+        # Check if paths exist
+        if (-not (Test-Path -Path $CombinedSpreadsheetPath)) {
+            Write-Log "Combined spreadsheet path does not exist: $CombinedSpreadsheetPath" "Red"
+            return $false
+        }
+        
+        if (-not (Test-Path -Path $SKUListPath)) {
+            Write-Log "SKU list file does not exist: $SKUListPath" "Red"
+            return $false
+        }
+        
+        if (-not (Test-Path -Path $FinalOutputPath)) {
+            # Create the final output directory if it doesn't exist
+            New-Item -Path $FinalOutputPath -ItemType Directory -Force | Out-Null
+            Write-Log "Created final output directory: $FinalOutputPath" "White"
+        }
+        
+        Write-Log "Starting SKU list processing..." "Cyan"
+        Update-ProgressBar 0
+        
+        # Import the SKU list CSV with a custom approach to handle duplicate headers
+        Write-Log "Importing SKU list from: $SKUListPath" "White"
+        
+        # Use Import-Csv with a temporary file to handle duplicate headers
+        Write-Log "Using a more robust method to import the SKU list..." "White"
+        
+        try {
+            # Create a temporary file with only the columns we need
+            $tempCsvPath = [System.IO.Path]::GetTempFileName()
+            
+            # Read the original CSV file
+            $csvContent = Get-Content -Path $SKUListPath -Encoding UTF8
+            
+            # Find the indices of the columns we need
+            $headerLine = $csvContent[0]
+            $headerValues = $headerLine.Split(',') | ForEach-Object { $_.Trim('"').Trim() }
+            
+            Write-Log "Searching for required columns in headers..." "White"
+            
+            # Function to find column index with flexible matching
+            function Find-ColumnIndex {
+                param (
+                    [string]$ColumnName,
+                    [array]$Headers
+                )
+                
+                # Try exact match first
+                $index = $Headers.IndexOf($ColumnName)
+                
+                # If not found, try with trimming spaces
+                if ($index -eq -1) {
+                    for ($i = 0; $i -lt $Headers.Count; $i++) {
+                        if ($Headers[$i].Trim() -eq $ColumnName) {
+                            return $i
+                        }
+                    }
+                    
+                    # If still not found, try case-insensitive match
+                    for ($i = 0; $i -lt $Headers.Count; $i++) {
+                        if ($Headers[$i].Trim() -eq $ColumnName -or 
+                            $Headers[$i].Trim() -eq " $ColumnName " -or
+                            $Headers[$i].Trim() -eq " $ColumnName" -or
+                            $Headers[$i].Trim() -eq "$ColumnName ") {
+                            return $i
+                        }
+                    }
+                    
+                    # Try contains match as last resort
+                    for ($i = 0; $i -lt $Headers.Count; $i++) {
+                        if ($Headers[$i].Contains($ColumnName)) {
+                            return $i
+                        }
+                    }
+                }
+                
+                return $index
+            }
+            
+            $tidIndex = Find-ColumnIndex -ColumnName "TID" -Headers $headerValues
+            $gmeSkuIndex = Find-ColumnIndex -ColumnName "GME SKU" -Headers $headerValues
+            $gmeNameIndex = Find-ColumnIndex -ColumnName "GME POS Name (36 Character Limit)" -Headers $headerValues
+            $conditionIndex = Find-ColumnIndex -ColumnName "Condition Abbreviated" -Headers $headerValues
+            $costIndex = Find-ColumnIndex -ColumnName "Cost" -Headers $headerValues
+            $priceRoundedIndex = Find-ColumnIndex -ColumnName "Price (Rounded)" -Headers $headerValues
+            $priceIndex = Find-ColumnIndex -ColumnName "Price" -Headers $headerValues
+            
+            Write-Log "Found column indices: TID=$tidIndex, GME SKU=$gmeSkuIndex, Name=$gmeNameIndex, Condition=$conditionIndex, Cost=$costIndex, Price Rounded=$priceRoundedIndex, Price=$priceIndex" "White"
+            
+            # Check if all required columns were found
+            if ($tidIndex -eq -1 -or $gmeSkuIndex -eq -1 -or $gmeNameIndex -eq -1 -or 
+                $conditionIndex -eq -1 -or $costIndex -eq -1 -or $priceRoundedIndex -eq -1 -or $priceIndex -eq -1) {
+                Write-Log "Error: Could not find all required columns in the SKU list CSV" "Red"
+                Write-Log "Required columns: TID, GME SKU, GME POS Name (36 Character Limit), Condition Abbreviated, Cost, Price (Rounded), Price" "Red"
+                Write-Log "Found headers: $headerLine" "Yellow"
+                return $false
+            }
+            
+            # Write the header line to the temporary file
+            "TID,GME_SKU,Card_Name,Condition,Cost,Price_Rounded,Price" | Out-File -FilePath $tempCsvPath -Encoding UTF8
+            
+            # Process each data row
+            for ($i = 1; $i -lt $csvContent.Count; $i++) {
+                $line = $csvContent[$i]
+                
+                # Skip empty lines
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    continue
+                }
+                
+                # Parse the CSV line properly, handling quoted values
+                $values = @()
+                $inQuotes = $false
+                $currentValue = ""
+                
+                for ($j = 0; $j -lt $line.Length; $j++) {
+                    $char = $line[$j]
+                    
+                    if ($char -eq '"') {
+                        $inQuotes = -not $inQuotes
+                    } elseif ($char -eq ',' -and -not $inQuotes) {
+                        $values += $currentValue
+                        $currentValue = ""
+                    } else {
+                        $currentValue += $char
+                    }
+                }
+                
+                # Add the last value
+                $values += $currentValue
+                
+                # Extract the values we need
+                $tid = if ($tidIndex -lt $values.Count) { $values[$tidIndex].Trim('"') } else { "" }
+                $gmeSku = if ($gmeSkuIndex -lt $values.Count) { $values[$gmeSkuIndex].Trim('"') } else { "" }
+                $cardName = if ($gmeNameIndex -lt $values.Count) { $values[$gmeNameIndex].Trim('"') } else { "" }
+                $condition = if ($conditionIndex -lt $values.Count) { $values[$conditionIndex].Trim('"') } else { "" }
+                $cost = if ($costIndex -lt $values.Count) { $values[$costIndex].Trim('"') } else { "" }
+                $priceRounded = if ($priceRoundedIndex -lt $values.Count) { $values[$priceRoundedIndex].Trim('"') } else { "" }
+                $price = if ($priceIndex -lt $values.Count) { $values[$priceIndex].Trim('"') } else { "" }
+                
+                # Write the extracted values to the temporary file
+                "$tid,$gmeSku,$cardName,$condition,$cost,$priceRounded,$price" | Out-File -FilePath $tempCsvPath -Append -Encoding UTF8
+            }
+            
+            # Import the temporary CSV file
+            $skuListData = Import-Csv -Path $tempCsvPath -Header "TID", "GME SKU", "GME POS Name (36 Character Limit)", "Condition Abbreviated", "Cost", "Price (Rounded)", "Price" -Encoding UTF8
+            
+            # Skip the header row
+            $skuListData = $skuListData | Select-Object -Skip 1
+            
+            # Clean up the temporary file
+            Remove-Item -Path $tempCsvPath -Force
+            
+            Write-Log "Successfully imported SKU list with $($skuListData.Count) rows" "Green"
+        } catch {
+            Write-Log "Error importing SKU list: $_" "Red"
+            return $false
+        }
+        
+        Write-Log "Imported SKU list with $($skuListData.Count) rows" "White"
+        
+        # Get all combined spreadsheets
+        $combinedFiles = Get-ChildItem -Path $CombinedSpreadsheetPath -Filter "Combined_Spreadsheet_*.xlsx"
+        
+        if ($combinedFiles.Count -eq 0) {
+            Write-Log "No combined spreadsheets found in: $CombinedSpreadsheetPath" "Yellow"
+            return $false
+        }
+        
+        Write-Log "Found $($combinedFiles.Count) combined spreadsheets to process" "White"
+        
+        $totalFiles = $combinedFiles.Count
+        $processedFiles = 0
+        
+        foreach ($combinedFile in $combinedFiles) {
+            # Extract the number from the combined spreadsheet filename
+            if ($combinedFile.Name -match "Combined_Spreadsheet_(\d+)\.xlsx") {
+                $fileNumber = $matches[1]
+                $gsFileName = "GS$fileNumber.xlsx"
+                $gsFilePath = Join-Path -Path $FinalOutputPath -ChildPath $gsFileName
+                
+                Write-Log "Processing combined spreadsheet: $($combinedFile.Name) -> $gsFileName" "Cyan"
+                
+                # Import the combined spreadsheet
+                $combinedData = Import-Excel -Path $combinedFile.FullName
+                Write-Log "  Imported combined spreadsheet with $($combinedData.Count) rows" "White"
+                
+                # Create a new array to hold the processed data
+                $processedData = @()
+                $matchCount = 0
+                $skipCount = 0
+                $noMatchCount = 0
+                $multipleMatchCount = 0
+                
+                # Process each row in the combined spreadsheet
+                foreach ($row in $combinedData) {
+                    # Skip empty rows or rows with "BLANK"
+                    $isBlankRow = $true
+                    foreach ($prop in $row.PSObject.Properties) {
+                        if ($prop.Value -and $prop.Value -ne "BLANK") {
+                            $isBlankRow = $false
+                            break
+                        }
+                    }
+                    
+                    if ($isBlankRow) {
+                        $skipCount++
+                        continue
+                    }
+                    
+                    # Get the TCGplayer Id
+                    $tcgplayerId = $row.'TCGplayer Id'
+                    
+                    if (-not $tcgplayerId) {
+                        Write-Log "  Row missing TCGplayer Id, skipping" "Yellow"
+                        $skipCount++
+                        continue
+                    }
+                    
+                    # Find matching row(s) in SKU list
+                    $matchingRows = $skuListData | Where-Object { $_.'TID' -eq $tcgplayerId }
+                    
+                    if (-not $matchingRows -or $matchingRows.Count -eq 0) {
+                        Write-Log "  No match found in SKU list for TCGplayer Id: $tcgplayerId" "Yellow"
+                        $noMatchCount++
+                        continue
+                    }
+                    
+                    if ($matchingRows.Count -gt 1) {
+                        Write-Log "  Multiple matches found in SKU list for TCGplayer Id: $tcgplayerId" "Yellow"
+                        $multipleMatchCount++
+                        continue
+                    }
+                    
+                    # Get the matched row
+                    $matchedRow = $matchingRows[0]
+                    
+                    # Extract required data
+                    $gmeSku = $matchedRow.'GME SKU'
+                    $cardName = $matchedRow.'GME POS Name (36 Character Limit)'
+                    
+                    # Use the 'Condition Abbreviated' field
+                    $condition = $matchedRow.'Condition Abbreviated'
+                    
+                    # Extract and clean monetary values
+                    $cost = $matchedRow.'Cost' -replace '\$', '' -replace ',', ''
+                    $priceRounded = $matchedRow.'Price (Rounded)' -replace '\$', '' -replace ',', ''
+                    $price = $matchedRow.'Price' -replace '\$', '' -replace ',', ''
+                    
+                    # Create barcode (GME SKU + P + whole number from Price Rounded)
+                    try {
+                        # First, remove the dollar sign and any commas
+                        $cleanPriceRounded = $priceRounded -replace '\$', '' -replace ',', ''
+                        
+                        # Handle empty or invalid price values
+                        if ([string]::IsNullOrWhiteSpace($cleanPriceRounded)) {
+                            $wholePriceNumber = 0
+                            Write-Log "  Warning: Invalid or empty price for TCGplayer Id: $tcgplayerId, using 0" "Yellow"
+                        } else {
+                            # Remove any non-numeric characters except decimal point
+                            $cleanPriceRounded = $cleanPriceRounded -replace '[^0-9\.]', ''
+                            
+                            # Try to parse as double and get the floor value
+                            $wholePriceNumber = [math]::Floor([double]::Parse($cleanPriceRounded))
+                            Write-Log "  Extracted whole price number: $wholePriceNumber from '$priceRounded'" "Gray"
+                        }
+                    } catch {
+                        # If parsing fails for any reason, use 0 and log a warning
+                        $wholePriceNumber = 0
+                        Write-Log "  Warning: Could not parse price '$priceRounded' for TCGplayer Id: $tcgplayerId, using 0" "Yellow"
+                    }
+                    
+                    $barcode = "$gmeSku" + "P" + "$wholePriceNumber"
+                    
+                    # Create a new object with the required properties
+                    $newRow = [PSCustomObject]@{
+                        'SKU' = $gmeSku
+                        'Barcode' = $barcode
+                        'Card Name' = $cardName
+                        'Condition' = $condition
+                        'Cost' = $cost
+                        'Price (Rounded)' = $priceRounded
+                        'Price' = $price
+                    }
+                    
+                    # Add to processed data
+                    $processedData += $newRow
+                    $matchCount++
+                    
+                    Write-Log "  Matched TCGplayer Id: $tcgplayerId with SKU: $gmeSku" "White"
+                }
+                
+                # Export the processed data to the GS file
+                if ($processedData.Count -gt 0) {
+                    $exportParams = @{
+                        Path = $gsFilePath
+                        WorksheetName = "Sheet1"
+                        AutoSize = $true
+                        TableName = "GSData"
+                        TableStyle = "Medium2"
+                        ErrorAction = "Stop"
+                    }
+                    
+                    $processedData | Export-Excel @exportParams
+                    
+                    Write-Log "  Created $gsFileName with $matchCount matched rows" "Green"
+                    Write-Log "  Skipped rows: $skipCount, No matches: $noMatchCount, Multiple matches: $multipleMatchCount" "White"
+                } else {
+                    Write-Log "  No matching data found for $($combinedFile.Name), GS file not created" "Yellow"
+                }
+            } else {
+                Write-Log "  Could not extract number from filename: $($combinedFile.Name)" "Yellow"
+            }
+            
+            $processedFiles++
+            $progressPercentage = [int](($processedFiles / $totalFiles) * 100)
+            Update-ProgressBar $progressPercentage
+        }
+        
+        Write-Log "SKU list processing completed." "Cyan"
+        Update-ProgressBar 100
+        
+        return $true
+    }
+    catch {
+        Write-Log "Error during SKU list processing: $_" "Red"
+        return $false
+    }
+}
+
 # Function to start the spreadsheet combining process
 function Start-SpreadsheetCombiningProcess {
     if ($spreadsheetLocations.Items.Count -lt 2) {
         Write-Log "At least two spreadsheet folder locations are required." "Yellow"
-        return
+        return $false
     }
     
     if ([string]::IsNullOrWhiteSpace($destinationLocation.Text)) {
         Write-Log "Please select a combined destination location." "Yellow"
-        return
+        return $false
     }
     
     Write-Log "Starting spreadsheet combining process..." "Cyan"
@@ -834,8 +1177,10 @@ function Start-SpreadsheetCombiningProcess {
     
     if ($success) {
         Write-Log "Spreadsheet combining completed successfully." "Green"
+        return $true
     } else {
         Write-Log "Spreadsheet combining completed with errors." "Red"
+        return $false
     }
 }
 
@@ -856,18 +1201,27 @@ function Select-FolderDialog {
     return $null
 }
 
-# Function to browse for a single folder
-function Select-FolderDialog {
-    # Use the standard Windows folder browser dialog
-    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-    $folderBrowser.Description = "Select a folder"
-    $folderBrowser.SelectedPath = $PSScriptRoot  # Start in the application directory
-    $folderBrowser.ShowNewFolderButton = $true   # Allow creating new folders
+# Function to browse for a single file
+function Select-FileDialog {
+    param (
+        [Parameter(Mandatory=$false)]
+        [string]$Filter = "All Files (*.*)|*.*",
+        
+        [Parameter(Mandatory=$false)]
+        [string]$Title = "Select a file"
+    )
     
-    $result = $folderBrowser.ShowDialog()
+    # Use the standard Windows open file dialog
+    $fileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $fileDialog.Filter = $Filter
+    $fileDialog.Title = $Title
+    $fileDialog.InitialDirectory = $PSScriptRoot  # Start in the application directory
+    $fileDialog.CheckFileExists = $true
+    
+    $result = $fileDialog.ShowDialog()
     
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        return $folderBrowser.SelectedPath
+        return $fileDialog.FileName
     }
     
     return $null
@@ -884,8 +1238,8 @@ Add-Type -AssemblyName System.Xml.Linq
 # Create the main form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Spreadsheet Wrangler"
-$form.Size = New-Object System.Drawing.Size(900, 700)
-$form.MinimumSize = New-Object System.Drawing.Size(800, 600)
+$form.Size = New-Object System.Drawing.Size(900, 850)
+$form.MinimumSize = New-Object System.Drawing.Size(800, 750)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -1087,12 +1441,14 @@ $mainLayout.Controls.Add($leftPanel, 0, 0)
 # Create a table layout for the left panel
 $leftLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $leftLayout.Dock = "Fill"
-$leftLayout.RowCount = 4
+$leftLayout.RowCount = 6
 $leftLayout.ColumnCount = 1
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 30)))
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 30)))
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20)))
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20)))
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20))) # Backup
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20))) # Spreadsheet
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Combined
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # SKU List
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Final Output
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Run Button
 $leftPanel.Controls.Add($leftLayout)
 
 # Backup Locations Section
@@ -1333,7 +1689,26 @@ $runBtn.Add_Click({
     }
     
     # Start spreadsheet combining process
-    Start-SpreadsheetCombiningProcess
+    $combineSuccess = Start-SpreadsheetCombiningProcess
+    
+    # Process SKU list if spreadsheet combining was successful and SKU list path is provided
+    if ($combineSuccess -and -not [string]::IsNullOrWhiteSpace($skuListLocation.Text) -and -not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
+        Write-Log "Starting SKU list processing..." "Cyan"
+        $skuListSuccess = Process-SKUList -CombinedSpreadsheetPath $destinationLocation.Text -SKUListPath $skuListLocation.Text -FinalOutputPath $finalOutputLocation.Text
+        
+        if ($skuListSuccess) {
+            Write-Log "SKU list processing completed successfully." "Green"
+        } else {
+            Write-Log "SKU list processing completed with errors." "Red"
+        }
+    } elseif ($combineSuccess) {
+        if ([string]::IsNullOrWhiteSpace($skuListLocation.Text)) {
+            Write-Log "SKU list processing skipped - No SKU list file specified." "Yellow"
+        }
+        if ([string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
+            Write-Log "SKU list processing skipped - No final output location specified." "Yellow"
+        }
+    }
     
     Write-Log "All operations completed." "Cyan"
     
@@ -1344,7 +1719,87 @@ $runBtn.Add_Click({
         "Spreadsheet Wrangler Log - Completed at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFilePath -Append
     }
 })
-$leftLayout.Controls.Add($runBtn, 0, 3)
+# SKU List Location Section
+$skuListPanel = New-Object System.Windows.Forms.GroupBox
+$skuListPanel.Text = "SKU List Location"
+$skuListPanel.Dock = "Fill"
+$leftLayout.Controls.Add($skuListPanel, 0, 3)
+
+$skuListLayout = New-Object System.Windows.Forms.TableLayoutPanel
+$skuListLayout.Dock = "Fill"
+$skuListLayout.RowCount = 2
+$skuListLayout.ColumnCount = 1
+$skuListLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 85)))
+$skuListLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 35)))
+$skuListPanel.Controls.Add($skuListLayout)
+
+# SKU List location display
+$skuListLocation = New-Object System.Windows.Forms.TextBox
+$skuListLocation.ReadOnly = $true
+$skuListLocation.Dock = "Fill"
+$skuListLocation.BackColor = [System.Drawing.Color]::White
+$toolTip.SetToolTip($skuListLocation, "Location of the SKUList.csv file")
+$skuListLayout.Controls.Add($skuListLocation, 0, 0)
+
+# Browse button for SKU List location
+$browseSkuListBtn = New-Object System.Windows.Forms.Button
+$browseSkuListBtn.Text = "Browse..."
+$browseSkuListBtn.Dock = "Right"
+$browseSkuListBtn.Width = 80
+$browseSkuListBtn.Height = 25
+$browseSkuListBtn.Margin = New-Object System.Windows.Forms.Padding(3, 2, 3, 2)
+$browseSkuListBtn.FlatStyle = "Flat"
+$toolTip.SetToolTip($browseSkuListBtn, "Select the SKUList.csv file")
+$browseSkuListBtn.Add_Click({
+    $filePath = Select-FileDialog -Filter "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*" -Title "Select SKU List File"
+    if ($filePath) {
+        $skuListLocation.Text = $filePath
+        Write-Log "Set SKU List location: $filePath"
+    }
+})
+$skuListLayout.Controls.Add($browseSkuListBtn, 0, 1)
+
+# Final Output Location Section
+$finalOutputPanel = New-Object System.Windows.Forms.GroupBox
+$finalOutputPanel.Text = "Final Output Location"
+$finalOutputPanel.Dock = "Fill"
+$leftLayout.Controls.Add($finalOutputPanel, 0, 4)
+
+$finalOutputLayout = New-Object System.Windows.Forms.TableLayoutPanel
+$finalOutputLayout.Dock = "Fill"
+$finalOutputLayout.RowCount = 2
+$finalOutputLayout.ColumnCount = 1
+$finalOutputLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 85)))
+$finalOutputLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 35)))
+$finalOutputPanel.Controls.Add($finalOutputLayout)
+
+# Final Output location display
+$finalOutputLocation = New-Object System.Windows.Forms.TextBox
+$finalOutputLocation.ReadOnly = $true
+$finalOutputLocation.Dock = "Fill"
+$finalOutputLocation.BackColor = [System.Drawing.Color]::White
+$toolTip.SetToolTip($finalOutputLocation, "Final GS##.xlsx file location")
+$finalOutputLayout.Controls.Add($finalOutputLocation, 0, 0)
+
+# Browse button for Final Output location
+$browseFinalOutputBtn = New-Object System.Windows.Forms.Button
+$browseFinalOutputBtn.Text = "Browse..."
+$browseFinalOutputBtn.Dock = "Right"
+$browseFinalOutputBtn.Width = 80
+$browseFinalOutputBtn.Height = 25
+$browseFinalOutputBtn.Margin = New-Object System.Windows.Forms.Padding(3, 2, 3, 2)
+$browseFinalOutputBtn.FlatStyle = "Flat"
+$toolTip.SetToolTip($browseFinalOutputBtn, "Select a folder for the final GS##.xlsx file")
+$browseFinalOutputBtn.Add_Click({
+    $folderPath = Select-FolderDialog
+    if ($folderPath) {
+        $finalOutputLocation.Text = $folderPath
+        Write-Log "Set Final Output location: $folderPath"
+    }
+})
+$finalOutputLayout.Controls.Add($browseFinalOutputBtn, 0, 1)
+
+$leftLayout.Controls.Add($runBtn, 0, 5)
 #endregion
 
 #region Right Panel
@@ -1523,6 +1978,16 @@ function Save-Configuration {
         $destinationElement.InnerText = $destinationLocation.Text
         $rootElement.AppendChild($destinationElement) | Out-Null
         
+        # Add SKU List location
+        $skuListElement = $xmlDoc.CreateElement("SKUListLocation")
+        $skuListElement.InnerText = $skuListLocation.Text
+        $rootElement.AppendChild($skuListElement) | Out-Null
+        
+        # Add Final Output location
+        $finalOutputElement = $xmlDoc.CreateElement("FinalOutputLocation")
+        $finalOutputElement.InnerText = $finalOutputLocation.Text
+        $rootElement.AppendChild($finalOutputElement) | Out-Null
+        
         # Add options
         $optionsElement = $xmlDoc.CreateElement("Options")
         $rootElement.AppendChild($optionsElement) | Out-Null
@@ -1595,6 +2060,18 @@ function Load-Configuration {
         $destinationElement = $xmlDoc.SelectSingleNode("//DestinationLocation")
         if ($destinationElement) {
             $destinationLocation.Text = $destinationElement.InnerText
+        }
+        
+        # Load SKU List location
+        $skuListElement = $xmlDoc.SelectSingleNode("//SKUListLocation")
+        if ($skuListElement) {
+            $skuListLocation.Text = $skuListElement.InnerText
+        }
+        
+        # Load Final Output location
+        $finalOutputElement = $xmlDoc.SelectSingleNode("//FinalOutputLocation")
+        if ($finalOutputElement) {
+            $finalOutputLocation.Text = $finalOutputElement.InnerText
         }
         
         # Load options

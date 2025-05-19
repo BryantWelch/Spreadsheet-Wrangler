@@ -26,6 +26,7 @@ $RECYCLE.BIN/
 # Logs
 logs/
 *.log
+*.txt
 
 # User-specific files
 *.rsuser
@@ -64,3 +65,9 @@ bld/
 
 # Output files that might be generated
 output/
+
+# Application backup folder
+.backup/
+
+# Configuration and data files
+*.xml
