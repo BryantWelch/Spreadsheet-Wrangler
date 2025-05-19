@@ -2,8 +2,7 @@
 
 A PowerShell GUI application for folder backups, spreadsheet combining operations, and SKU list processing.
 
-<img src="https://github.com/user-attachments/assets/d3791579-ae79-45d9-866e-95077f9baccc" width=75% height=75%>
-
+<img src="https://github.com/user-attachments/assets/f0af31ce-4c7d-42b9-b361-fd763294b308" width=75% height=75%>
 
 ## Features
 
