@@ -1367,7 +1367,7 @@ $aboutMenuItem.Add_Click({
     
     # Main about text
     $aboutLabel = New-Object System.Windows.Forms.Label
-    $aboutLabel.Text = "Spreadsheet Wrangler v1.3.2`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
+    $aboutLabel.Text = "Spreadsheet Wrangler v1.4.0`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
     $aboutLabel.AutoSize = $false
     $aboutLabel.Dock = "Fill"
     $aboutLabel.TextAlign = "MiddleCenter"
