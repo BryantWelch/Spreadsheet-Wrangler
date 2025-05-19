@@ -1,6 +1,6 @@
 # Spreadsheet Wrangler
 
-A PowerShell GUI application for folder backups and spreadsheet combining operations.
+A PowerShell GUI application for folder backups, spreadsheet combining operations, and SKU list processing.
 
 <img src="https://github.com/user-attachments/assets/d3791579-ae79-45d9-866e-95077f9baccc" width=75% height=75%>
 
@@ -18,6 +18,12 @@ A PowerShell GUI application for folder backups and spreadsheet combining operat
 - Support for multiple spreadsheet formats (.xlsx, .xls, .csv)
 - Maintain headers from the first spreadsheet (optional)
 - Save combined spreadsheets to a user-selected destination
+
+### SKU List Processing
+- Match TCGplayer IDs from combined spreadsheets with TIDs in a SKU list CSV file
+- Create GSxx spreadsheets with matched data from the SKU list
+- Generate barcodes based on SKU and price information
+- Extract specific fields like SKU, Card Name, Condition, Cost, and Price
 
 ### Advanced Spreadsheet Options
 - **No Headers**: Exclude headers when combining spreadsheets
@@ -68,6 +74,13 @@ powershell -ExecutionPolicy Bypass -File .\SpreadsheetWrangler.ps1
 2. Set the destination folder for combined spreadsheets
 3. Select desired options for the combining process
 4. Click "Run" to start the process
+
+### SKU List Processing
+1. Complete the spreadsheet combining process steps above
+2. Select a SKU list CSV file using the "SKU List Location" section
+3. Choose a destination folder for the final output files using the "Final Output Location" section
+4. Click "Run" to process the combined spreadsheets against the SKU list
+5. GSxx files will be created in the final output location with matched data
 
 ### Configuration
 - **File → New Configuration**: Reset all settings to default
