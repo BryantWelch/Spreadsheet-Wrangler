@@ -1,6 +1,11 @@
 # Spreadsheet Wrangler
 
-A PowerShell GUI application for folder backups, spreadsheet combining operations, and SKU list processing.
+[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.5.1)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE.svg)](https://github.com/PowerShell/PowerShell)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/en-us/windows)
+
+> A feature packed PowerShell GUI tool for spreadsheet operations with no Excel dependency
 
 <img src="https://github.com/user-attachments/assets/f0af31ce-4c7d-42b9-b361-fd763294b308" width=75% height=75%>
 
@@ -23,6 +28,9 @@ A PowerShell GUI application for folder backups, spreadsheet combining operation
 - Create GSxx spreadsheets with matched data from the SKU list
 - Generate barcodes based on SKU and price information
 - Extract specific fields like SKU, Card Name, Condition, Cost, and Price
+- Create GS_Missing spreadsheet with all unmatched rows for review
+- Optimized performance with hashtable-based lookups (4-5x faster)
+- Process spreadsheets in natural numerical order
 
 ### Advanced Spreadsheet Options
 - **No Headers**: Exclude headers when combining spreadsheets
@@ -41,7 +49,7 @@ A PowerShell GUI application for folder backups, spreadsheet combining operation
 
 - Windows operating system
 - PowerShell 5.1 or higher
-- Microsoft Excel (for spreadsheet operations)
+- ImportExcel PowerShell module (automatically installed if missing)
 
 ## Installation
 
@@ -80,6 +88,7 @@ powershell -ExecutionPolicy Bypass -File .\SpreadsheetWrangler.ps1
 3. Choose a destination folder for the final output files using the "Final Output Location" section
 4. Click "Run" to process the combined spreadsheets against the SKU list
 5. GSxx files will be created in the final output location with matched data
+6. GS_Missing will be created in the final output location with non-matched data
 
 ### Configuration
 - **File → New Configuration**: Reset all settings to default
