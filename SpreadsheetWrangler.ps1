@@ -700,8 +700,21 @@ function Process-SKUList {
         
         Write-Log "Imported SKU list with $($skuListData.Count) rows" "White"
         
-        # Get all combined spreadsheets
-        $combinedFiles = Get-ChildItem -Path $CombinedSpreadsheetPath -Filter "Combined_Spreadsheet_*.xlsx"
+        # Create a hashtable for fast SKU lookups indexed by TID
+        Write-Log "Creating SKU lookup table for faster processing..." "White"
+        $skuLookup = @{}
+        foreach ($item in $skuListData) {
+            if ($item.TID) {
+                # Convert TID to string to ensure consistent lookup
+                $tidKey = $item.TID.ToString().Trim()
+                $skuLookup[$tidKey] = $item
+            }
+        }
+        Write-Log "Created lookup table with $($skuLookup.Count) SKUs" "White"
+        
+        # Get all combined spreadsheets and sort them numerically
+        $combinedFiles = Get-ChildItem -Path $CombinedSpreadsheetPath -Filter "Combined_Spreadsheet_*.xlsx" | 
+            Sort-Object { [int]($_.Name -replace 'Combined_Spreadsheet_(\d+)\.xlsx', '$1') }
         
         if ($combinedFiles.Count -eq 0) {
             Write-Log "No combined spreadsheets found in: $CombinedSpreadsheetPath" "Yellow"
@@ -712,6 +725,9 @@ function Process-SKUList {
         
         $totalFiles = $combinedFiles.Count
         $processedFiles = 0
+        
+        # Create an array to hold all missing matches for the GS_Missing spreadsheet
+        $missingData = @()
         
         foreach ($combinedFile in $combinedFiles) {
             # Extract the number from the combined spreadsheet filename
@@ -758,23 +774,27 @@ function Process-SKUList {
                         continue
                     }
                     
-                    # Find matching row(s) in SKU list
-                    $matchingRows = $skuListData | Where-Object { $_.'TID' -eq $tcgplayerId }
+                    # Use hashtable for fast lookup instead of filtering the entire SKU list
+                    # Convert TCGplayer Id to string to ensure consistent lookup
+                    $tcgplayerIdKey = $tcgplayerId.ToString().Trim()
+                    $matchedRow = $skuLookup[$tcgplayerIdKey]
                     
-                    if (-not $matchingRows -or $matchingRows.Count -eq 0) {
+                    if (-not $matchedRow) {
                         Write-Log "  No match found in SKU list for TCGplayer Id: $tcgplayerId" "Yellow"
                         $noMatchCount++
+                        
+                        # Add the unmatched row to the missingData array
+                        # Create a clone of the row to avoid reference issues
+                        $missingRow = [PSCustomObject]@{}
+                        foreach ($prop in $row.PSObject.Properties) {
+                            $missingRow | Add-Member -MemberType NoteProperty -Name $prop.Name -Value $prop.Value
+                        }
+                        $missingData += $missingRow
                         continue
                     }
                     
-                    if ($matchingRows.Count -gt 1) {
-                        Write-Log "  Multiple matches found in SKU list for TCGplayer Id: $tcgplayerId" "Yellow"
-                        $multipleMatchCount++
-                        continue
-                    }
-                    
-                    # Get the matched row
-                    $matchedRow = $matchingRows[0]
+                    # Check for multiple matches is no longer needed with hashtable approach
+                    # as we're storing one SKU per TID in the hashtable
                     
                     # Extract required data
                     $gmeSku = $matchedRow.'GME SKU'
@@ -853,9 +873,71 @@ function Process-SKUList {
                 Write-Log "  Could not extract number from filename: $($combinedFile.Name)" "Yellow"
             }
             
+            # If we found unmatched rows in this spreadsheet, add a separator for the next spreadsheet
+            if ($noMatchCount -gt 0 -and $processedFiles -lt ($totalFiles - 1)) {
+                # Get property names from the first row to ensure consistent structure
+                if ($missingData.Count -gt 0) {
+                    $firstRow = $missingData[0]
+                    $propNames = $firstRow.PSObject.Properties.Name
+                    
+                    # Create a separator row with the spreadsheet name in the first column
+                    $separatorRow = [PSCustomObject]@{}
+                    foreach ($propName in $propNames) {
+                        if ($propName -eq 'TCGplayer Id') {
+                            $separatorRow | Add-Member -MemberType NoteProperty -Name $propName -Value "COMBINED_SPREADSHEET_$fileNumber"
+                        } else {
+                            $separatorRow | Add-Member -MemberType NoteProperty -Name $propName -Value $null
+                        }
+                    }
+                    $missingData += $separatorRow
+                }
+            }
+            
             $processedFiles++
             $progressPercentage = [int](($processedFiles / $totalFiles) * 100)
             Update-ProgressBar $progressPercentage
+        }
+        
+        # Create the GS_Missing spreadsheet if we have any missing data
+        if ($missingData.Count -gt 0) {
+            try {
+                $gsMissingFilePath = Join-Path -Path $FinalOutputPath -ChildPath "GS_Missing.xlsx"
+                
+                # Ensure the export path exists
+                $exportDir = Split-Path -Path $gsMissingFilePath -Parent
+                if (-not (Test-Path -Path $exportDir)) {
+                    New-Item -Path $exportDir -ItemType Directory -Force | Out-Null
+                }
+                
+                Write-Log "Exporting $($missingData.Count) unmatched rows to GS_Missing.xlsx..." "White"
+                
+                $exportParams = @{
+                    Path = $gsMissingFilePath
+                    WorksheetName = "Sheet1"
+                    AutoSize = $true
+                    TableName = "MissingData"
+                    TableStyle = "Medium2"
+                    ErrorAction = "Stop"
+                }
+                
+                # Export with error handling
+                $missingData | Export-Excel @exportParams
+                
+                Write-Log "Created GS_Missing.xlsx with $($missingData.Count) unmatched rows" "Green"
+            } catch {
+                Write-Log "Error creating GS_Missing.xlsx: $_" "Red"
+                
+                # Fallback method if Export-Excel fails
+                try {
+                    Write-Log "Attempting alternative export method..." "Yellow"
+                    $missingData | ConvertTo-Csv -NoTypeInformation | Out-File -FilePath "$FinalOutputPath\GS_Missing.csv" -Encoding UTF8
+                    Write-Log "Created GS_Missing.csv as fallback" "Green"
+                } catch {
+                    Write-Log "Fallback export also failed: $_" "Red"
+                }
+            }
+        } else {
+            Write-Log "No unmatched rows found, GS_Missing.xlsx not created" "Yellow"
         }
         
         Write-Log "SKU list processing completed." "Cyan"
