@@ -1,21 +1,8 @@
 # SpreadsheetWrangler.ps1
 # GUI application for spreadsheet operations and folder backups
 
-# Check for Excel and ImportExcel module availability
-$script:UseExcelCOM = $false
+# Check for ImportExcel module availability
 $script:UseImportExcel = $false
-
-try {
-    # Try to create Excel COM object to check if Excel is installed
-    $excelCheck = New-Object -ComObject Excel.Application -ErrorAction Stop
-    $excelCheck.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excelCheck) | Out-Null
-    # Excel is installed, but we'll force using ImportExcel module instead
-    Write-Host "Excel installation detected, but using ImportExcel module for better performance." -ForegroundColor Green
-    $script:UseExcelCOM = $false  # Force to false even when Excel is available
-} catch {
-    Write-Host "Excel is not installed or not accessible. Will use ImportExcel module." -ForegroundColor Yellow
-}
 
 # Check if ImportExcel module is installed
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
@@ -228,17 +215,8 @@ function Combine-Spreadsheets {
     )
     
     try {
-        # Initialize Excel or ImportExcel based on availability
-        $excel = $null
-        
-        if ($script:UseExcelCOM) {
-            Write-Log "Initializing Excel COM objects..." "White"
-            $excel = New-Object -ComObject Excel.Application
-            $excel.Visible = $false
-            $excel.DisplayAlerts = $false
-        } else {
-            Write-Log "Using ImportExcel module (Excel-free mode)..." "White"
-        }
+        # Using ImportExcel module for all operations
+        Write-Log "Using ImportExcel module for all operations..." "White"
         
         # Create a dictionary to store spreadsheets by number
         $spreadsheetGroups = @{}
@@ -291,13 +269,6 @@ function Combine-Spreadsheets {
         # Check if we found any spreadsheets
         if ($spreadsheetGroups.Count -eq 0) {
             Write-Log "No spreadsheets with matching numbers found in the selected folders." "Yellow"
-            
-            # Clean up Excel COM objects if they were used
-            if ($script:UseExcelCOM -and $excel) {
-                $excel.Quit()
-                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-            }
-            
             return $false
         }
         
@@ -328,101 +299,7 @@ function Combine-Spreadsheets {
             $isFirstFile = $true
             $lastColumn = 0
             
-            if ($script:UseExcelCOM) {
-                #region Excel COM Processing
-                # Create a new workbook for the combined data
-                $combinedWorkbook = $excel.Workbooks.Add()
-                $combinedWorksheet = $combinedWorkbook.Worksheets.Item(1)
-                $combinedWorksheet.Name = "Combined"
-                
-                # Process each file in the group
-                foreach ($file in $files) {
-                    Write-Log "  Combining: $file" "White"
-                    
-                    # Open the source workbook
-                    $sourceWorkbook = $excel.Workbooks.Open($file)
-                    $sourceWorksheet = $sourceWorkbook.Worksheets.Item(1)
-                    
-                    # Get used range
-                    $usedRange = $sourceWorksheet.UsedRange
-                    $lastRow = $usedRange.Rows.Count
-                    $lastColumn = $usedRange.Columns.Count
-                    
-                    # Handle headers based on the ExcludeHeaders option
-                    if ($ExcludeHeaders) {
-                        # No headers mode - always skip the first row (header) of all files
-                        $startRow = 2  # Start from row 2 of each source file (skip header)
-                        
-                        # For the first file, set up the combined sheet to start at row 1 (no headers)
-                        if ($isFirstFile) {
-                            $rowIndex = 1  # Start at row 1 in combined sheet (no headers)
-                            $isFirstFile = $false
-                            Write-Log "  No Headers mode: Skipping header row from all files" "White"
-                        }
-                    } else {
-                        # Include headers mode
-                        if ($isFirstFile) {
-                            # Copy header row from first file only
-                            $headerRange = $sourceWorksheet.Range($sourceWorksheet.Cells(1, 1), $sourceWorksheet.Cells(1, $lastColumn))
-                            $headerRange.Copy() | Out-Null
-                            $combinedWorksheet.Range($combinedWorksheet.Cells(1, 1), $combinedWorksheet.Cells(1, $lastColumn)).PasteSpecial(-4163) | Out-Null
-                            $rowIndex = 2  # Start data at row 2 (after header)
-                            $isFirstFile = $false
-                        }
-                        # For all files in include headers mode, skip the header row except for the first file
-                        $startRow = 2  # Skip header row from source files
-                    }
-                    if ($lastRow -ge $startRow) {
-                        $dataRange = $sourceWorksheet.Range($sourceWorksheet.Cells($startRow, 1), $sourceWorksheet.Cells($lastRow, $lastColumn))
-                        $dataRange.Copy() | Out-Null
-                        $combinedWorksheet.Range($combinedWorksheet.Cells($rowIndex, 1), $combinedWorksheet.Cells($rowIndex + $lastRow - $startRow, $lastColumn)).PasteSpecial(-4163) | Out-Null
-                        $rowIndex += $lastRow - $startRow + 1
-                        
-                        # Insert BLANK row between spreadsheets if option is enabled and this is not the last file
-                        if ($InsertBlankRows -and ($file -ne $files[-1])) {
-                            Write-Log "  Inserting BLANK row after data from: $file" "White"
-                            
-                            # Determine which columns should have BLANK values
-                            if (-not $ExcludeHeaders) {
-                                # If headers are included, add BLANK only to columns that have headers
-                                for ($col = 1; $col -le $lastColumn; $col++) {
-                                    $headerText = $combinedWorksheet.Cells(1, $col).Text
-                                    if (-not [string]::IsNullOrWhiteSpace($headerText)) {
-                                        $combinedWorksheet.Cells($rowIndex, $col).Value = "BLANK"
-                                    }
-                                }
-                            } else {
-                                # If no headers, we need to determine which columns actually have data
-                                # Look at the first few rows to determine which columns are used
-                                $usedColumns = @{}
-                                
-                                # Check the first 5 rows (or fewer if there aren't that many)
-                                $rowsToCheck = [Math]::Min(5, $rowIndex - 1)
-                                for ($row = 1; $row -le $rowsToCheck; $row++) {
-                                    for ($col = 1; $col -le $lastColumn; $col++) {
-                                        $cellValue = $combinedWorksheet.Cells($row, $col).Text
-                                        if (-not [string]::IsNullOrWhiteSpace($cellValue)) {
-                                            $usedColumns[$col] = $true
-                                        }
-                                    }
-                                }
-                                
-                                # Add BLANK only to columns that have data
-                                foreach ($col in $usedColumns.Keys) {
-                                    $combinedWorksheet.Cells($rowIndex, $col).Value = "BLANK"
-                                }
-                            }
-                            
-                            $rowIndex += 1
-                        }
-                    }
-                    
-                    # Close the source workbook without saving
-                    $sourceWorkbook.Close($false)
-                    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sourceWorkbook) | Out-Null
-                }
-                #endregion Excel COM Processing
-            } else {
+            # Process using ImportExcel
                 #region ImportExcel Processing
                 # Process each file in the group
                 foreach ($file in $files) {
@@ -514,140 +391,9 @@ function Combine-Spreadsheets {
                         Write-Log "  Error processing file $file``: $errorMessage" "Red"
                     }
                 }
-                #endregion ImportExcel Processing
-            }
             
             # Process special options and save the combined spreadsheet
             $combinedFilePath = Join-Path -Path $DestinationPath -ChildPath "Combined_Spreadsheet_$groupNumber.xlsx"
-            
-            if ($script:UseExcelCOM) {
-                #region Excel COM Special Options Processing
-                if ($DuplicateQuantityTwoRows -or $NormalizeQuantities -or $ReverseDataRows) {
-                    # Find the 'Add to Quantity' column if it exists
-                    $addToQuantityColIndex = $null
-                    
-                    # Re-open the workbook to process it
-                    $tempWorkbook = $excel.Workbooks.Add()
-                    $tempWorksheet = $tempWorkbook.Worksheets.Item(1)
-                    $tempWorksheet.Name = "Combined"
-                    
-                    # Copy all data from combined worksheet to temp worksheet
-                    $combinedWorksheet.UsedRange.Copy() | Out-Null
-                    $tempWorksheet.Range("A1").PasteSpecial(-4163) | Out-Null
-                    
-                    # Find the 'Add to Quantity' column if it exists
-                    $lastColumn = $tempWorksheet.UsedRange.Columns.Count
-                    $lastRow = $tempWorksheet.UsedRange.Rows.Count
-                    
-                    # Process Duplicate Qty=2 and Normalize Qty to 1 options
-                    if ($DuplicateQuantityTwoRows -or $NormalizeQuantities) {
-                        for ($col = 1; $col -le $lastColumn; $col++) {
-                            $headerText = $tempWorksheet.Cells(1, $col).Text
-                            if ($headerText -eq "Add to Quantity") {
-                                $addToQuantityColIndex = $col
-                                Write-Log "  Found 'Add to Quantity' column at index $col" "White"
-                                break
-                            }
-                        }
-                        
-                        # Process the column if found
-                        if ($addToQuantityColIndex) {
-                            # First duplicate rows with '2' in the 'Add to Quantity' column if option is enabled
-                            if ($DuplicateQuantityTwoRows) {
-                                Write-Log "  Processing 'Duplicate Qty=2' option..." "White"
-                                
-                                # We need to process from bottom to top to avoid index shifting issues
-                                $rowsToInsert = @()
-                                
-                                for ($row = $lastRow; $row -ge 2; $row--) {
-                                    $cellValue = $tempWorksheet.Cells($row, $addToQuantityColIndex).Text
-                                    if ($cellValue -eq "2") {
-                                        Write-Log "    Found row $row with quantity 2, duplicating..." "White"
-                                        $rowsToInsert += $row
-                                    }
-                                }
-                                
-                                foreach ($row in $rowsToInsert) {
-                                    # Insert a new row
-                                    $range = $tempWorksheet.Rows($row)
-                                    $range.Copy() | Out-Null
-                                    $tempWorksheet.Rows($row).Insert(-4121) | Out-Null  # -4121 is xlShiftDown
-                                    $lastRow++
-                                }
-                                
-                                Write-Log "  Duplicated $($rowsToInsert.Count) rows with quantity 2" "Green"
-                            }
-                            
-                            # Then normalize all quantities to '1' if option is enabled
-                            if ($NormalizeQuantities) {
-                                Write-Log "  Processing 'Normalize Qty to 1' option..." "White"
-                                $changedCount = 0
-                                
-                                for ($row = 2; $row -le $lastRow; $row++) {
-                                    $cellValue = $tempWorksheet.Cells($row, $addToQuantityColIndex).Text
-                                    if ($cellValue -ne "1") {
-                                        $tempWorksheet.Cells($row, $addToQuantityColIndex).Value = "1"
-                                        $changedCount++
-                                    }
-                                }
-                                
-                                Write-Log "  Normalized $changedCount cells to quantity 1" "Green"
-                            }
-                        } else {
-                            Write-Log "  'Add to Quantity' column not found, skipping quantity processing" "Yellow"
-                        }
-                    }
-                    
-                    # Apply Reverse, Reverse option if enabled
-                    if ($ReverseDataRows) {
-                        Write-Log "  Applying 'Reverse, Reverse' option..." "White"
-                        
-                        # Determine the range to reverse (exclude header row if headers are included)
-                        $startRow = if (-not $ExcludeHeaders) { 2 } else { 1 }
-                        $lastRow = $tempWorksheet.UsedRange.Rows.Count
-                        $lastColumn = $tempWorksheet.UsedRange.Columns.Count
-                        
-                        if ($lastRow -ge $startRow) {
-                            # Create a temporary array to hold the reversed data
-                            $dataArray = @()
-                            
-                            # Copy data to array (from bottom to top)
-                            for ($row = $lastRow; $row -ge $startRow; $row--) {
-                                $rowData = @()
-                                for ($col = 1; $col -le $lastColumn; $col++) {
-                                    $rowData += $tempWorksheet.Cells($row, $col).Value
-                                }
-                                $dataArray += ,$rowData
-                            }
-                            
-                            # Write the reversed data back to the worksheet
-                            for ($i = 0; $i -lt $dataArray.Count; $i++) {
-                                $row = $startRow + $i
-                                for ($col = 1; $col -le $lastColumn; $col++) {
-                                    if ($col -le $dataArray[$i].Count) {
-                                        $tempWorksheet.Cells($row, $col).Value = $dataArray[$i][$col-1]
-                                    }
-                                }
-                            }
-                            
-                            Write-Log "  Data rows reversed successfully" "Green"
-                        } else {
-                            Write-Log "  Not enough data rows to reverse" "Yellow"
-                        }
-                    }
-                    
-                    # Save the processed workbook
-                    $tempWorkbook.SaveAs($combinedFilePath)
-                    $tempWorkbook.Close($true)
-                    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($tempWorkbook) | Out-Null
-                } else {
-                    # Save the combined workbook normally
-                    $combinedWorkbook.SaveAs($combinedFilePath)
-                    $combinedWorkbook.Close($true)
-                    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($combinedWorkbook) | Out-Null
-                }
-                #endregion Excel COM Special Options Processing
-            } else {
                 #region ImportExcel Special Options Processing
                 # Process Duplicate Qty=2 and Normalize Qty to 1 options
                 if ($DuplicateQuantityTwoRows -or $NormalizeQuantities) {
@@ -751,8 +497,6 @@ function Combine-Spreadsheets {
                     $errorMessage = $_.Exception.Message
                     Write-Log "  Error exporting combined data``: $errorMessage" "Red"
                 }
-                #endregion ImportExcel Special Options Processing
-            }
             
             Write-Log "  Saved combined spreadsheet: $combinedFilePath" "Green"
             
@@ -761,13 +505,9 @@ function Combine-Spreadsheets {
             Update-ProgressBar $progressPercentage
         }
         
-        # Clean up resources
-        if ($script:UseExcelCOM -and $excel) {
-            $excel.Quit()
-            [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-        }
+        # No Excel COM resources to clean up
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
         
         Write-Log "Spreadsheet combining process completed." "Cyan"
         Update-ProgressBar 100
@@ -777,13 +517,7 @@ function Combine-Spreadsheets {
     catch {
         Write-Log "Error during spreadsheet combining: $_" "Red"
         
-        # Try to clean up Excel if an error occurs
-        if ($excel) {
-            try {
-                $excel.Quit()
-                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
-            } catch {}
-        }
+        # No Excel COM resources to clean up
         
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
