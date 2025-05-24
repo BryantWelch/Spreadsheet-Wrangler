@@ -1017,6 +1017,631 @@ function Select-FolderDialog {
     return $null
 }
 
+# Function to create labels from template
+function Create-Labels {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InputFolder,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$OutputFolder,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$ParamTemplate = "",
+        
+        [Parameter(Mandatory=$false)]
+        [string]$PrtTemplate = "",
+        
+        [Parameter(Mandatory=$false)]
+        [string]$DymoTemplate = ""
+    )
+    
+    try {
+        # Check if paths exist
+        if (-not (Test-Path -Path $InputFolder)) {
+            Write-Log "Input folder does not exist: $InputFolder" "Red"
+            return $false
+        }
+        
+        if (-not (Test-Path -Path $OutputFolder)) {
+            # Create output folder if it doesn't exist
+            New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
+            Write-Log "Created output folder: $OutputFolder"
+        }
+        
+        # Check for provided template files
+        $templateFilesExist = $true
+        
+        # Check for param template
+        if (-not [string]::IsNullOrWhiteSpace($ParamTemplate) -and (Test-Path -Path $ParamTemplate)) {
+            $paramTemplatePath = $ParamTemplate
+            Write-Log "Using provided param template: $paramTemplatePath" "Cyan"
+        } else {
+            $templateFilesExist = $false
+            Write-Log "No param template provided or file not found" "Yellow"
+        }
+        
+        # Check for prt template
+        if (-not [string]::IsNullOrWhiteSpace($PrtTemplate) -and (Test-Path -Path $PrtTemplate)) {
+            $prtTemplatePath = $PrtTemplate
+            Write-Log "Using provided prt template: $prtTemplatePath" "Cyan"
+        } else {
+            $templateFilesExist = $false
+            Write-Log "No prt template provided or file not found" "Yellow"
+        }
+        
+        # Check for dymo template (not used yet but stored for future use)
+        if (-not [string]::IsNullOrWhiteSpace($DymoTemplate) -and (Test-Path -Path $DymoTemplate)) {
+            $dymoTemplatePath = $DymoTemplate
+            Write-Log "Using provided dymo template: $dymoTemplatePath" "Cyan"
+        } else {
+            Write-Log "No dymo template provided or file not found (not required)" "Yellow"
+        }
+        
+        # Check if template files exist
+        $templateFilesExist = $true
+        
+        if (-not (Test-Path -Path $paramTemplatePath)) {
+            Write-Log "Param template file not found: $paramTemplatePath" "Yellow"
+            $templateFilesExist = $false
+        }
+        
+        if (-not (Test-Path -Path $prtTemplatePath)) {
+            Write-Log "PRT template file not found: $prtTemplatePath" "Yellow"
+            $templateFilesExist = $false
+        }
+        
+        if (-not $templateFilesExist) {
+            Write-Log "Template files not found. Using default empty templates." "Yellow"
+            # Create default empty templates
+            $paramTemplateContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Parameters></Parameters>
+"@
+            $prtTemplateContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<PrintTemplate></PrintTemplate>
+"@
+        } else {
+            # Read template files
+            $paramTemplateContent = Get-Content -Path $paramTemplatePath -Raw
+            $prtTemplateContent = Get-Content -Path $prtTemplatePath -Raw
+        }
+        
+        # Start the label creation process
+        Write-Log "Starting label creation process..." "Cyan"
+        Update-ProgressBar 0
+        
+        # Get all Excel files in the input folder
+        $excelFiles = Get-ChildItem -Path $InputFolder -Filter "GS*.xlsx"
+        $totalFiles = $excelFiles.Count
+        $processedFiles = 0
+        
+        if ($totalFiles -eq 0) {
+            Write-Log "No GS*.xlsx files found in input folder: $InputFolder" "Yellow"
+            Update-ProgressBar 100
+            return $true
+        }
+        
+        Write-Log "Found $totalFiles GS*.xlsx files to process" "White"
+        
+        # Process each Excel file
+        foreach ($excelFile in $excelFiles) {
+            Write-Log "Processing file: $($excelFile.Name)" "White"
+            
+            # Extract the GS number from the filename
+            if ($excelFile.BaseName -match "GS(\d+)") {
+                $gsNumber = $matches[1]
+                Write-Log "  Extracted GS number: $gsNumber" "White"
+                
+                # Create output file paths
+                $paramFileName = "GS$gsNumber.param"
+                $prtFileName = "GS$gsNumber.prt"
+                $xmlFileName = "GS$gsNumber.xml"
+                $tskFileName = "GS$gsNumber.tsk"
+                
+                $paramFilePath = Join-Path -Path $OutputFolder -ChildPath $paramFileName
+                $prtFilePath = Join-Path -Path $OutputFolder -ChildPath $prtFileName
+                $xmlFilePath = Join-Path -Path $OutputFolder -ChildPath $xmlFileName
+                $tskFilePath = Join-Path -Path $OutputFolder -ChildPath $tskFileName
+                $zipFilePath = Join-Path -Path $OutputFolder -ChildPath "GS$gsNumber.zip"
+                
+                # Create temporary folder for files to zip
+                $tempFolder = Join-Path -Path $OutputFolder -ChildPath "temp_GS$gsNumber"
+                if (-not (Test-Path -Path $tempFolder)) {
+                    New-Item -Path $tempFolder -ItemType Directory -Force | Out-Null
+                }
+                
+                $tempParamPath = Join-Path -Path $tempFolder -ChildPath $paramFileName
+                $tempPrtPath = Join-Path -Path $tempFolder -ChildPath $prtFileName
+                $tempXmlPath = Join-Path -Path $tempFolder -ChildPath $xmlFileName
+                
+                try {
+                    # Import Excel data
+                    Write-Log "  Importing Excel data..." "White"
+                    $excelData = Import-Excel -Path $excelFile.FullName -ErrorAction Stop
+                    
+                    if ($excelData.Count -eq 0) {
+                        Write-Log "  No data found in Excel file" "Yellow"
+                        continue
+                    }
+                    
+                    # 1. Create the .param file (exact copy with new name)
+                    $paramTemplateContent | Out-File -FilePath $tempParamPath -Encoding utf8
+                    Write-Log "  Created $paramFileName" "Green"
+                    
+                    # 2. Create the .prt file (with data from first row)
+                    $firstRow = $excelData[0]
+                    $cardName = $firstRow.'Card Name'
+                    $price = $firstRow.'Price (Rounded)'
+                    $barcode = $firstRow.Barcode
+                    $sku = $firstRow.SKU
+                    
+                    # Replace data in .prt template
+                    $prtContent = $prtTemplateContent
+                    
+                    # Escape XML special characters in the data (order is important: & must be first)
+                    $escapedCardName = $cardName -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+                    $escapedPrice = $price -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+                    $escapedBarcode = $barcode -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+                    $escapedSku = $sku -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+                    
+                    # Replace each marker with the corresponding escaped data from the Excel file
+                    $prtContent = $prtContent -replace 'Change Card Name Data Here', $escapedCardName
+                    $prtContent = $prtContent -replace 'Change Price \(Rounded\) Data Here', $escapedPrice
+                    $prtContent = $prtContent -replace 'Change Barcode Data Here', $escapedBarcode
+                    $prtContent = $prtContent -replace 'Change SKU Data Here', $escapedSku
+                    
+                    # Save the .prt file
+                    $prtContent | Out-File -FilePath $tempPrtPath -Encoding utf8
+                    Write-Log "  Created $prtFileName with data from first row" "Green"
+                    
+                    # 3. Create the .xml file with all data rows
+                    # Create XML document
+                    $xmlDoc = New-Object System.Xml.XmlDocument
+                    
+                    # Create declaration
+                    $declaration = $xmlDoc.CreateXmlDeclaration("1.0", "utf-8", $null)
+                    $xmlDoc.AppendChild($declaration) | Out-Null
+                    
+                    # Create root element
+                    $rootElement = $xmlDoc.CreateElement("DBdata")
+                    $xmlDoc.AppendChild($rootElement) | Out-Null
+                    
+                    # Add data rows
+                    $rowId = 1
+                    foreach ($row in $excelData) {
+                        # Create DataRow element
+                        $dataRowElement = $xmlDoc.CreateElement("DataRow")
+                        $dataRowElement.SetAttribute("id", $rowId.ToString())
+                        
+                        # Create Card Name element
+                        $cardNameElement = $xmlDoc.CreateElement("Excel")
+                        $cardNameElement.SetAttribute("col", "Card Name")
+                        $cardNameElement.InnerText = $row.'Card Name'
+                        $dataRowElement.AppendChild($cardNameElement) | Out-Null
+                        
+                        # Create Price element
+                        $priceElement = $xmlDoc.CreateElement("Excel")
+                        $priceElement.SetAttribute("col", "Price (Rounded)")
+                        $priceElement.InnerText = $row.'Price (Rounded)'
+                        $dataRowElement.AppendChild($priceElement) | Out-Null
+                        
+                        # Create Barcode element
+                        $barcodeElement = $xmlDoc.CreateElement("Excel")
+                        $barcodeElement.SetAttribute("col", "Barcode")
+                        $barcodeElement.InnerText = $row.Barcode
+                        $dataRowElement.AppendChild($barcodeElement) | Out-Null
+                        
+                        # Create SKU element
+                        $skuElement = $xmlDoc.CreateElement("Excel")
+                        $skuElement.SetAttribute("col", "SKU")
+                        $skuElement.InnerText = $row.SKU
+                        $dataRowElement.AppendChild($skuElement) | Out-Null
+                        
+                        # Add DataRow to root
+                        $rootElement.AppendChild($dataRowElement) | Out-Null
+                        
+                        $rowId++
+                    }
+                    
+                    # Save XML to file
+                    $xmlDoc.Save($tempXmlPath)
+                    Write-Log "  Created $xmlFileName with $($excelData.Count) rows" "Green"
+                    
+                    # 4. Create a ZIP archive and rename to .tsk
+                    Write-Log "  Creating archive..." "White"
+                    
+                    # Check if Compress-Archive is available (PowerShell 5.0+)
+                    if (Get-Command -Name Compress-Archive -ErrorAction SilentlyContinue) {
+                        Compress-Archive -Path "$tempFolder\*" -DestinationPath $zipFilePath -Force
+                        
+                        # Rename .zip to .tsk
+                        if (Test-Path -Path $tskFilePath) {
+                            Remove-Item -Path $tskFilePath -Force
+                        }
+                        Rename-Item -Path $zipFilePath -NewName $tskFileName
+                        Write-Log "  Created $tskFileName archive" "Green"
+                    }
+                    else {
+                        # Alternative ZIP method for older PowerShell versions
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempFolder, $zipFilePath)
+                        
+                        # Rename .zip to .tsk
+                        if (Test-Path -Path $tskFilePath) {
+                            Remove-Item -Path $tskFilePath -Force
+                        }
+                        Rename-Item -Path $zipFilePath -NewName $tskFileName
+                        Write-Log "  Created $tskFileName archive" "Green"
+                    }
+                    
+                    # We only want to keep the .tsk file, individual files are not copied to the output folder
+                    Write-Log "  Only keeping the .tsk file in the output folder" "White"
+                }
+                catch {
+                    Write-Log "  Error processing file: $_" "Red"
+                }
+                finally {
+                    # Clean up temporary folder
+                    if (Test-Path -Path $tempFolder) {
+                        Remove-Item -Path $tempFolder -Recurse -Force
+                    }
+                }
+            }
+            else {
+                Write-Log "  Could not extract GS number from filename: $($excelFile.Name)" "Yellow"
+            }
+            
+            $processedFiles++
+            $progressPercentage = [int](($processedFiles / $totalFiles) * 100)
+            Update-ProgressBar $progressPercentage
+        }
+        
+        # Create Dymo labels if a template was provided
+        if (-not [string]::IsNullOrWhiteSpace($DymoTemplate) -and (Test-Path -Path $DymoTemplate)) {
+            Write-Log "Starting Dymo label creation process..." "Cyan"
+            Update-ProgressBar 0
+            
+            # Read the Dymo template content
+            $dymoTemplateContent = Get-Content -Path $DymoTemplate -Raw
+            
+            # Process each Excel file for Dymo labels
+            $processedFiles = 0
+            foreach ($excelFile in $excelFiles) {
+                Write-Log "Creating Dymo label for: $($excelFile.Name)" "White"
+                
+                try {
+                    # Import Excel data
+                    $excelData = Import-Excel -Path $excelFile.FullName -ErrorAction Stop
+                    
+                    if ($excelData.Count -eq 0) {
+                        Write-Log "  No data found in Excel file" "Yellow"
+                        continue
+                    }
+                    
+                    # Create XML structure for the spreadsheet data
+                    $xmlDoc = New-Object System.Xml.XmlDocument
+                    $dataTable = $xmlDoc.CreateElement("DataTable")
+                    
+                    # Define Columns
+                    $columns = $xmlDoc.CreateElement("Columns")
+                    $dataTable.AppendChild($columns) | Out-Null
+                    
+                    # Get column names from the first row
+                    $firstRow = $excelData[0]
+                    $columnNames = $firstRow.PSObject.Properties.Name
+                    
+                    foreach ($colName in $columnNames) {
+                        $colElem = $xmlDoc.CreateElement("DataColumn")
+                        $colElem.InnerText = $colName
+                        $columns.AppendChild($colElem) | Out-Null
+                    }
+                    
+                    # Define Rows
+                    $rows = $xmlDoc.CreateElement("Rows")
+                    $dataTable.AppendChild($rows) | Out-Null
+                    
+                    foreach ($row in $excelData) {
+                        $rowElem = $xmlDoc.CreateElement("DataRow")
+                        $rows.AppendChild($rowElem) | Out-Null
+                        
+                        foreach ($colName in $columnNames) {
+                            $valueElem = $xmlDoc.CreateElement("Value")
+                            $value = $row.$colName
+                            
+                            # Convert to string and remove .0 from numeric values
+                            if ($value -is [double] -and $value -eq [math]::Floor($value)) {
+                                $value = [math]::Floor($value).ToString()
+                            } else {
+                                $value = $value.ToString()
+                            }
+                            
+                            $valueElem.InnerText = $value
+                            $rowElem.AppendChild($valueElem) | Out-Null
+                        }
+                    }
+                    
+                    # Convert to string and format
+                    $xmlSettings = New-Object System.Xml.XmlWriterSettings
+                    $xmlSettings.Indent = $true
+                    $xmlSettings.IndentChars = "    "
+                    $xmlSettings.NewLineChars = "`n"
+                    $xmlSettings.NewLineHandling = [System.Xml.NewLineHandling]::Replace
+                    $xmlSettings.OmitXmlDeclaration = $true
+                    
+                    $stringBuilder = New-Object System.Text.StringBuilder
+                    $xmlWriter = [System.Xml.XmlWriter]::Create($stringBuilder, $xmlSettings)
+                    $dataTable.WriteTo($xmlWriter)
+                    $xmlWriter.Flush()
+                    $xmlWriter.Close()
+                    
+                    $dataTableXml = $stringBuilder.ToString()
+                    
+                    # Insert the data into the template
+                    $outputContent = $dymoTemplateContent -replace "</DesktopLabel>", "$dataTableXml`n</DesktopLabel>"
+                    
+                    # Save as .dymo file
+                    $dymoFileName = [System.IO.Path]::GetFileNameWithoutExtension($excelFile.Name) + ".dymo"
+                    $dymoFilePath = Join-Path -Path $OutputFolder -ChildPath $dymoFileName
+                    
+                    $outputContent | Out-File -FilePath $dymoFilePath -Encoding utf8
+                    
+                    Write-Log "  Created $dymoFileName" "Green"
+                } catch {
+                    Write-Log "  Error creating Dymo label: $_" "Red"
+                }
+                
+                $processedFiles++
+                $progressPercentage = [int](($processedFiles / $totalFiles) * 100)
+                Update-ProgressBar $progressPercentage
+            }
+            
+            Write-Log "Dymo label creation process completed. Labels saved to: $OutputFolder" "Cyan"
+        }
+        
+        Write-Log "Label creation process completed. Labels saved to: $OutputFolder" "Cyan"
+        Update-ProgressBar 100
+        return $true
+    }
+    catch {
+        Write-Log "Error during label creation: $_" "Red"
+        return $false
+    }
+}
+
+# Function to show the Create Labels dialog
+function Show-CreateLabelsDialog {
+    # Create the form
+    $labelsForm = New-Object System.Windows.Forms.Form
+    $labelsForm.Text = "Create Labels"
+    $labelsForm.Size = New-Object System.Drawing.Size(600, 370)
+    $labelsForm.StartPosition = "CenterScreen"
+    $labelsForm.FormBorderStyle = "FixedDialog"
+    $labelsForm.MaximizeBox = $false
+    $labelsForm.MinimizeBox = $false
+    
+    # Create the layout panel
+    $labelsPanel = New-Object System.Windows.Forms.TableLayoutPanel
+    $labelsPanel.Dock = "Fill"
+    $labelsPanel.RowCount = 6
+    $labelsPanel.ColumnCount = 3
+    $labelsPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
+    $labelsPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $labelsPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 80)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    $labelsPanel.Padding = New-Object System.Windows.Forms.Padding(10)
+    $labelsForm.Controls.Add($labelsPanel)
+    
+    # Input folder label
+    $inputFolderLabel = New-Object System.Windows.Forms.Label
+    $inputFolderLabel.Text = "Input Folder:"
+    $inputFolderLabel.Dock = "Fill"
+    $inputFolderLabel.TextAlign = "MiddleLeft"
+    $labelsPanel.Controls.Add($inputFolderLabel, 0, 0)
+    
+    # Input folder textbox
+    $inputFolderTextBox = New-Object System.Windows.Forms.TextBox
+    $inputFolderTextBox.Dock = "Fill"
+    $inputFolderTextBox.ReadOnly = $true
+    $labelsPanel.Controls.Add($inputFolderTextBox, 1, 0)
+    
+    # Create tooltip for input folder
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    $toolTip.SetToolTip($inputFolderTextBox, "Select the folder containing your GSxx.xlsx files to process.")
+    $toolTip.SetToolTip($inputFolderLabel, "Select the folder containing your GSxx.xlsx files to process.")
+    
+    # Auto-fill with Final Output location if it's set
+    if (-not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
+        $inputFolderTextBox.Text = $finalOutputLocation.Text
+    }
+    
+    # Input folder browse button
+    $inputFolderButton = New-Object System.Windows.Forms.Button
+    $inputFolderButton.Text = "Browse..."
+    $inputFolderButton.Dock = "Fill"
+    $inputFolderButton.Add_Click({
+        $folderPath = Select-FolderDialog
+        if ($folderPath) {
+            $inputFolderTextBox.Text = $folderPath
+        }
+    })
+    $labelsPanel.Controls.Add($inputFolderButton, 2, 0)
+    
+    # Output folder label
+    $outputFolderLabel = New-Object System.Windows.Forms.Label
+    $outputFolderLabel.Text = "Output Folder:"
+    $outputFolderLabel.Dock = "Fill"
+    $outputFolderLabel.TextAlign = "MiddleLeft"
+    $labelsPanel.Controls.Add($outputFolderLabel, 0, 1)
+    
+    # Output folder textbox
+    $outputFolderTextBox = New-Object System.Windows.Forms.TextBox
+    $outputFolderTextBox.Dock = "Fill"
+    $outputFolderTextBox.ReadOnly = $true
+    $labelsPanel.Controls.Add($outputFolderTextBox, 1, 1)
+    
+    # Tooltip for output folder
+    $toolTip.SetToolTip($outputFolderTextBox, "Select the folder where the GSxx.tsk files will be saved.")
+    $toolTip.SetToolTip($outputFolderLabel, "Select the folder where the GSxx.tsk files will be saved.")
+    
+    # Output folder browse button
+    $outputFolderButton = New-Object System.Windows.Forms.Button
+    $outputFolderButton.Text = "Browse..."
+    $outputFolderButton.Dock = "Fill"
+    $outputFolderButton.Add_Click({
+        $folderPath = Select-FolderDialog
+        if ($folderPath) {
+            $outputFolderTextBox.Text = $folderPath
+        }
+    })
+    $labelsPanel.Controls.Add($outputFolderButton, 2, 1)
+    
+    # Param Template label
+    $paramTemplateLabel = New-Object System.Windows.Forms.Label
+    $paramTemplateLabel.Text = "Param Template:"
+    $paramTemplateLabel.Dock = "Fill"
+    $paramTemplateLabel.TextAlign = "MiddleLeft"
+    $labelsPanel.Controls.Add($paramTemplateLabel, 0, 2)
+    
+    # Param Template textbox
+    $paramTemplateTextBox = New-Object System.Windows.Forms.TextBox
+    $paramTemplateTextBox.Dock = "Fill"
+    $paramTemplateTextBox.ReadOnly = $true
+    $labelsPanel.Controls.Add($paramTemplateTextBox, 1, 2)
+    
+    # Tooltip for param template
+    $toolTip.SetToolTip($paramTemplateTextBox, "Select a .param template file for printer configuration settings.")
+    $toolTip.SetToolTip($paramTemplateLabel, "Select a .param template file for printer configuration settings.")
+    
+    # Param Template browse button
+    $paramTemplateButton = New-Object System.Windows.Forms.Button
+    $paramTemplateButton.Text = "Browse..."
+    $paramTemplateButton.Dock = "Fill"
+    $paramTemplateButton.Add_Click({
+        $filePath = Select-FileDialog -Filter "Param Files (*.param)|*.param|All Files (*.*)|*.*"
+        if ($filePath) {
+            $paramTemplateTextBox.Text = $filePath
+        }
+    })
+    $labelsPanel.Controls.Add($paramTemplateButton, 2, 2)
+    
+    # PRT Template label
+    $prtTemplateLabel = New-Object System.Windows.Forms.Label
+    $prtTemplateLabel.Text = "PRT Template:"
+    $prtTemplateLabel.Dock = "Fill"
+    $prtTemplateLabel.TextAlign = "MiddleLeft"
+    $labelsPanel.Controls.Add($prtTemplateLabel, 0, 3)
+    
+    # PRT Template textbox
+    $prtTemplateTextBox = New-Object System.Windows.Forms.TextBox
+    $prtTemplateTextBox.Dock = "Fill"
+    $prtTemplateTextBox.ReadOnly = $true
+    $labelsPanel.Controls.Add($prtTemplateTextBox, 1, 3)
+    
+    # Tooltip for PRT template
+    $toolTip.SetToolTip($prtTemplateTextBox, "Select a .prt template file that contains the label layout with markers for 'Change Card Name Data Here', etc.")
+    $toolTip.SetToolTip($prtTemplateLabel, "Select a .prt template file that contains the label layout with markers for 'Change Card Name Data Here', etc.")
+    
+    # PRT Template browse button
+    $prtTemplateButton = New-Object System.Windows.Forms.Button
+    $prtTemplateButton.Text = "Browse..."
+    $prtTemplateButton.Dock = "Fill"
+    $prtTemplateButton.Add_Click({
+        $filePath = Select-FileDialog -Filter "PRT Files (*.prt)|*.prt|All Files (*.*)|*.*"
+        if ($filePath) {
+            $prtTemplateTextBox.Text = $filePath
+        }
+    })
+    $labelsPanel.Controls.Add($prtTemplateButton, 2, 3)
+    
+    # Dymo Template label
+    $dymoTemplateLabel = New-Object System.Windows.Forms.Label
+    $dymoTemplateLabel.Text = "Dymo Template:"
+    $dymoTemplateLabel.Dock = "Fill"
+    $dymoTemplateLabel.TextAlign = "MiddleLeft"
+    $labelsPanel.Controls.Add($dymoTemplateLabel, 0, 4)
+    
+    # Dymo Template textbox
+    $dymoTemplateTextBox = New-Object System.Windows.Forms.TextBox
+    $dymoTemplateTextBox.Dock = "Fill"
+    $dymoTemplateTextBox.ReadOnly = $true
+    $labelsPanel.Controls.Add($dymoTemplateTextBox, 1, 4)
+    
+    # Tooltip for Dymo template
+    $toolTip.SetToolTip($dymoTemplateTextBox, "Select a Dymo template file (optional - for future functionality).")
+    $toolTip.SetToolTip($dymoTemplateLabel, "Select a Dymo template file (optional - for future functionality).")
+    
+    # Dymo Template browse button
+    $dymoTemplateButton = New-Object System.Windows.Forms.Button
+    $dymoTemplateButton.Text = "Browse..."
+    $dymoTemplateButton.Dock = "Fill"
+    $dymoTemplateButton.Add_Click({
+        $filePath = Select-FileDialog -Filter "Dymo Files (*.xml)|*.xml|All Files (*.*)|*.*"
+        if ($filePath) {
+            $dymoTemplateTextBox.Text = $filePath
+        }
+    })
+    $labelsPanel.Controls.Add($dymoTemplateButton, 2, 4)
+    
+    # Button panel
+    $buttonPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+    $buttonPanel.Dock = "Bottom"
+    $buttonPanel.FlowDirection = "RightToLeft"
+    $buttonPanel.WrapContents = $false
+    $buttonPanel.Height = 40
+    $buttonPanel.Padding = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
+    $labelsPanel.Controls.Add($buttonPanel, 0, 5)
+    $labelsPanel.SetColumnSpan($buttonPanel, 3)
+    
+    # Create button
+    $createButton = New-Object System.Windows.Forms.Button
+    $createButton.Text = "Create Labels"
+    $createButton.Width = 120
+    $createButton.Height = 30
+    $createButton.Margin = New-Object System.Windows.Forms.Padding(5, 0, 0, 0)
+    $createButton.Add_Click({
+        # Validate inputs
+        if ([string]::IsNullOrWhiteSpace($inputFolderTextBox.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please select an input folder.", "Input Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            return
+        }
+        
+        if ([string]::IsNullOrWhiteSpace($outputFolderTextBox.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please select an output folder.", "Input Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            return
+        }
+        
+        # Close the dialog
+        $labelsForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $labelsForm.Close()
+        
+        # Start the label creation process
+        Create-Labels -InputFolder $inputFolderTextBox.Text -OutputFolder $outputFolderTextBox.Text -ParamTemplate $paramTemplateTextBox.Text -PrtTemplate $prtTemplateTextBox.Text -DymoTemplate $dymoTemplateTextBox.Text
+    })
+    $buttonPanel.Controls.Add($createButton)
+    
+    # Cancel button
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Width = 80
+    $cancelButton.Height = 30
+    $cancelButton.Margin = New-Object System.Windows.Forms.Padding(5, 0, 0, 0)
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $buttonPanel.Controls.Add($cancelButton)
+    
+    $labelsForm.AcceptButton = $createButton
+    $labelsForm.CancelButton = $cancelButton
+    
+    # Show the dialog
+    $labelsForm.ShowDialog() | Out-Null
+}
+
 # Function to browse for a single file
 function Select-FileDialog {
     param (
@@ -1156,6 +1781,18 @@ $exitMenuItem.ShortcutKeys = [System.Windows.Forms.Keys]::Alt -bor [System.Windo
 $exitMenuItem.Add_Click({ $form.Close() })
 $fileMenu.DropDownItems.Add($exitMenuItem)
 
+# Labels Menu
+$labelsMenu = New-Object System.Windows.Forms.ToolStripMenuItem
+$labelsMenu.Text = "Labels"
+
+# Create Labels
+$createLabelsMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$createLabelsMenuItem.Text = "Create Labels"
+$createLabelsMenuItem.Add_Click({
+    Show-CreateLabelsDialog
+})
+$labelsMenu.DropDownItems.Add($createLabelsMenuItem)
+
 # Help Menu
 $helpMenu = New-Object System.Windows.Forms.ToolStripMenuItem
 $helpMenu.Text = "Help"
@@ -1218,6 +1855,7 @@ $helpMenu.DropDownItems.Add($aboutMenuItem)
 
 # Add menus to menu bar
 $menuBar.Items.Add($fileMenu)
+$menuBar.Items.Add($labelsMenu)
 $menuBar.Items.Add($helpMenu)
 
 # Add menu bar to form

@@ -1,6 +1,6 @@
 # Spreadsheet Wrangler
 
-[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.5.1)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.6.0)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE.svg)](https://github.com/PowerShell/PowerShell)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/en-us/windows)
@@ -31,6 +31,14 @@
 - Create GS_Missing spreadsheet with all unmatched rows for review
 - Optimized performance with hashtable-based lookups (4-5x faster)
 - Process spreadsheets in natural numerical order
+
+### Label Creation
+- Create printer-ready label files from Excel spreadsheets
+- Support for both standard printer labels (.tsk files) and Dymo labels (.dymo files)
+- Customizable templates for different label formats
+- Process all GSxx.xlsx files in a folder automatically
+- Proper handling of special characters in card names and other data
+- User-friendly dialog with tooltips for all options
 
 ### Advanced Spreadsheet Options
 - **No Headers**: Exclude headers when combining spreadsheets
@@ -89,6 +97,20 @@ powershell -ExecutionPolicy Bypass -File .\SpreadsheetWrangler.ps1
 4. Click "Run" to process the combined spreadsheets against the SKU list
 5. GSxx files will be created in the final output location with matched data
 6. GS_Missing will be created in the final output location with non-matched data
+
+### Label Creation
+1. Click on "Labels" in the menu bar, then select "Create Labels"
+2. In the dialog that appears:
+   - Select the input folder containing your GSxx.xlsx files
+   - Choose an output folder where label files will be saved
+   - (Optional) Select a .param template file for printer configuration
+   - (Optional) Select a .prt template file containing label layout with data markers
+   - (Optional) Select a Dymo template file for Dymo label creation
+3. Click "Create Labels" to start the process
+4. The application will create:
+   - GSxx.tsk files (if param/prt templates are provided)
+   - GSxx.dymo files (if a Dymo template is provided)
+5. All files will be saved to the selected output folder
 
 ### Configuration
 - **File → New Configuration**: Reset all settings to default
