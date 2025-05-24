@@ -412,23 +412,40 @@ function Combine-Spreadsheets {
                     
                     # Process the column if found
                     if ($addToQuantityColName) {
-                        # First duplicate rows with '2' in the 'Add to Quantity' column if option is enabled
+                        # Duplicate rows based on the numeric value in the 'Add to Quantity' column if option is enabled
                         if ($DuplicateQuantityTwoRows) {
-                            Write-Log "  Processing 'Duplicate Qty=2' option..." "White"
+                            Write-Log "  Processing 'Duplicate by Quantity' option..." "White"
                             
                             $rowsToAdd = @()
+                            $totalDuplicates = 0
                             
-                            # Find rows with quantity 2 and duplicate them
+                            # Process each row based on its quantity value
                             for ($i = 0; $i -lt $combinedData.Count; $i++) {
                                 $row = $combinedData[$i]
-                                if ($row.$addToQuantityColName -eq "2") {
-                                    $rowsToAdd += $row
+                                $qtyValue = $row.$addToQuantityColName
+                                
+                                # Try to parse the quantity as an integer
+                                if ([int]::TryParse($qtyValue, [ref]$null)) {
+                                    $qty = [int]$qtyValue
+                                    
+                                    # If quantity is greater than 1, duplicate the row (qty-1) times
+                                    if ($qty -gt 1) {
+                                        for ($j = 1; $j -lt $qty; $j++) {
+                                            # Create a clone of the row to avoid reference issues
+                                            $clonedRow = [PSCustomObject]@{}
+                                            foreach ($prop in $row.PSObject.Properties) {
+                                                $clonedRow | Add-Member -MemberType NoteProperty -Name $prop.Name -Value $prop.Value
+                                            }
+                                            $rowsToAdd += $clonedRow
+                                            $totalDuplicates++
+                                        }
+                                    }
                                 }
                             }
                             
                             # Add the duplicated rows
                             $combinedData += $rowsToAdd
-                            Write-Log "  Duplicated $($rowsToAdd.Count) rows with quantity 2" "Green"
+                            Write-Log "  Duplicated $totalDuplicates rows based on 'Add to Quantity' values" "Green"
                         }
                         
                         # Then normalize all quantities to '1' if option is enabled
@@ -973,7 +990,7 @@ function Start-SpreadsheetCombiningProcess {
     }
     
     # Get options from checkboxes
-    $fileExtension = if ($optionCheckboxes[1].Checked) { "*.*" } else { "*.xlsx" }
+    $fileExtension = if ($optionCheckboxes[5].Checked) { "*.*" } else { "*.xlsx" }
     $excludeHeaders = $optionCheckboxes[2].Checked
     $duplicateQuantityTwoRows = $optionCheckboxes[3].Checked
     $normalizeQuantities = $optionCheckboxes[4].Checked
@@ -1421,6 +1438,8 @@ function Show-CreateLabelsDialog {
     $labelsForm.MaximizeBox = $false
     $labelsForm.MinimizeBox = $false
     
+    # Form is ready to display
+    
     # Create the layout panel
     $labelsPanel = New-Object System.Windows.Forms.TableLayoutPanel
     $labelsPanel.Dock = "Fill"
@@ -1451,13 +1470,18 @@ function Show-CreateLabelsDialog {
     $inputFolderTextBox.ReadOnly = $true
     $labelsPanel.Controls.Add($inputFolderTextBox, 1, 0)
     
+    # Immediately set the text value if we have a saved path
+    if (-not [string]::IsNullOrWhiteSpace($script:LabelInputFolder)) {
+        $inputFolderTextBox.Text = $script:LabelInputFolder
+    }
+    
     # Create tooltip for input folder
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($inputFolderTextBox, "Select the folder containing your GSxx.xlsx files to process.")
     $toolTip.SetToolTip($inputFolderLabel, "Select the folder containing your GSxx.xlsx files to process.")
     
-    # Auto-fill with Final Output location if it's set
-    if (-not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
+    # Use Final Output location as a fallback for Input Folder if needed
+    if ([string]::IsNullOrWhiteSpace($inputFolderTextBox.Text) -and -not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
         $inputFolderTextBox.Text = $finalOutputLocation.Text
     }
     
@@ -1485,6 +1509,11 @@ function Show-CreateLabelsDialog {
     $outputFolderTextBox.Dock = "Fill"
     $outputFolderTextBox.ReadOnly = $true
     $labelsPanel.Controls.Add($outputFolderTextBox, 1, 1)
+    
+    # Immediately set the text value if we have a saved path
+    if (-not [string]::IsNullOrWhiteSpace($script:LabelOutputFolder)) {
+        $outputFolderTextBox.Text = $script:LabelOutputFolder
+    }
     
     # Tooltip for output folder
     $toolTip.SetToolTip($outputFolderTextBox, "Select the folder where the GSxx.tsk files will be saved.")
@@ -1515,6 +1544,11 @@ function Show-CreateLabelsDialog {
     $paramTemplateTextBox.ReadOnly = $true
     $labelsPanel.Controls.Add($paramTemplateTextBox, 1, 2)
     
+    # Immediately set the text value if we have a saved path
+    if (-not [string]::IsNullOrWhiteSpace($script:LabelParamTemplate)) {
+        $paramTemplateTextBox.Text = $script:LabelParamTemplate
+    }
+    
     # Tooltip for param template
     $toolTip.SetToolTip($paramTemplateTextBox, "Select a .param template file for printer configuration settings.")
     $toolTip.SetToolTip($paramTemplateLabel, "Select a .param template file for printer configuration settings.")
@@ -1544,6 +1578,11 @@ function Show-CreateLabelsDialog {
     $prtTemplateTextBox.ReadOnly = $true
     $labelsPanel.Controls.Add($prtTemplateTextBox, 1, 3)
     
+    # Immediately set the text value if we have a saved path
+    if (-not [string]::IsNullOrWhiteSpace($script:LabelPrtTemplate)) {
+        $prtTemplateTextBox.Text = $script:LabelPrtTemplate
+    }
+    
     # Tooltip for PRT template
     $toolTip.SetToolTip($prtTemplateTextBox, "Select a .prt template file that contains the label layout with markers for 'Change Card Name Data Here', etc.")
     $toolTip.SetToolTip($prtTemplateLabel, "Select a .prt template file that contains the label layout with markers for 'Change Card Name Data Here', etc.")
@@ -1572,6 +1611,11 @@ function Show-CreateLabelsDialog {
     $dymoTemplateTextBox.Dock = "Fill"
     $dymoTemplateTextBox.ReadOnly = $true
     $labelsPanel.Controls.Add($dymoTemplateTextBox, 1, 4)
+    
+    # Immediately set the text value if we have a saved path
+    if (-not [string]::IsNullOrWhiteSpace($script:LabelDymoTemplate)) {
+        $dymoTemplateTextBox.Text = $script:LabelDymoTemplate
+    }
     
     # Tooltip for Dymo template
     $toolTip.SetToolTip($dymoTemplateTextBox, "Select a Dymo template file (optional - for future functionality).")
@@ -1639,7 +1683,17 @@ function Show-CreateLabelsDialog {
     $labelsForm.CancelButton = $cancelButton
     
     # Show the dialog
-    $labelsForm.ShowDialog() | Out-Null
+    $result = $labelsForm.ShowDialog()
+    
+    # Always save the paths regardless of how the dialog was closed
+    $script:LabelInputFolder = $inputFolderTextBox.Text
+    $script:LabelOutputFolder = $outputFolderTextBox.Text
+    $script:LabelParamTemplate = $paramTemplateTextBox.Text
+    $script:LabelPrtTemplate = $prtTemplateTextBox.Text
+    $script:LabelDymoTemplate = $dymoTemplateTextBox.Text
+    
+    # Return true if dialog was accepted
+    return ($result -eq [System.Windows.Forms.DialogResult]::OK)
 }
 
 # Function to browse for a single file
@@ -2120,7 +2174,7 @@ $runBtn.Add_Click({
     $outputTextbox.Clear()
     
     # Initialize log file if logging is enabled
-    if ($optionCheckboxes[5].Checked) { # Log to File option
+    if ($optionCheckboxes[8].Checked) { # Log to File option
         $logFileName = "SpreadsheetWrangler_Log_$(Get-TimeStampString).txt"
         $script:LogFilePath = Join-Path -Path $PWD.Path -ChildPath $logFileName
         
@@ -2142,11 +2196,19 @@ $runBtn.Add_Click({
         Write-Log "Backup process skipped due to 'Skip Backup' option." "Yellow"
     }
     
-    # Start spreadsheet combining process
-    $combineSuccess = Start-SpreadsheetCombiningProcess
+    # Start spreadsheet combining process if not skipped
+    $combineSuccess = $true
+    if (-not $optionCheckboxes[1].Checked) {
+        $combineSuccess = Start-SpreadsheetCombiningProcess
+    } else {
+        Write-Log "Spreadsheet combining process skipped due to 'Skip Combine' option." "Yellow"
+    }
     
-    # Process SKU list if spreadsheet combining was successful and SKU list path is provided
-    if ($combineSuccess -and -not [string]::IsNullOrWhiteSpace($skuListLocation.Text) -and -not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text)) {
+    # Process SKU list if spreadsheet combining was successful (or skipped) and SKU list path is provided
+    # When combining is skipped, we still need to have a valid destination location
+    if ($combineSuccess -and -not [string]::IsNullOrWhiteSpace($skuListLocation.Text) -and 
+        -not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text) -and 
+        (-not $optionCheckboxes[1].Checked -or -not [string]::IsNullOrWhiteSpace($destinationLocation.Text))) {
         Write-Log "Starting SKU list processing..." "Cyan"
         $skuListSuccess = Process-SKUList -CombinedSpreadsheetPath $destinationLocation.Text -SKUListPath $skuListLocation.Text -FinalOutputPath $finalOutputLocation.Text
         
@@ -2301,12 +2363,12 @@ $checkbox1.Margin = New-Object System.Windows.Forms.Padding(5)
 $toolTip.SetToolTip($checkbox1, "Skip the backup process and only combine spreadsheets")
 $optionsLayout.Controls.Add($checkbox1, 0, 0)
 
-# Option 2: Support multiple file formats
+# Option 2: Skip Combine - Skip the spreadsheet combining process
 $optionCheckboxes += $checkbox2 = New-Object System.Windows.Forms.CheckBox
-$checkbox2.Text = "All Formats"
+$checkbox2.Text = "Skip Combine"
 $checkbox2.Dock = "Fill"
 $checkbox2.Margin = New-Object System.Windows.Forms.Padding(5)
-$toolTip.SetToolTip($checkbox2, "Process all spreadsheet formats (.xlsx, .xls, .csv)")
+$toolTip.SetToolTip($checkbox2, "Skip the spreadsheet combining process and only perform backup and/or SKU list processing")
 $optionsLayout.Controls.Add($checkbox2, 1, 0)
 
 # Option 3: Exclude headers
@@ -2317,12 +2379,12 @@ $checkbox3.Margin = New-Object System.Windows.Forms.Padding(5)
 $toolTip.SetToolTip($checkbox3, "Exclude headers when combining spreadsheets")
 $optionsLayout.Controls.Add($checkbox3, 2, 0)
 
-# Option 4: Duplicate rows with '2' in 'Add to Quantity' column
+# Option 4: Duplicate rows based on value in 'Add to Quantity' column
 $optionCheckboxes += $checkbox4 = New-Object System.Windows.Forms.CheckBox
-$checkbox4.Text = "Duplicate Qty=2"
+$checkbox4.Text = "Duplicate by Qty"
 $checkbox4.Dock = "Fill"
 $checkbox4.Margin = New-Object System.Windows.Forms.Padding(5)
-$toolTip.SetToolTip($checkbox4, "Duplicate rows with '2' in the 'Add to Quantity' column")
+$toolTip.SetToolTip($checkbox4, "Duplicate rows based on the numeric value in the 'Add to Quantity' column. For example, a value of 7 will create 7 total rows.")
 $optionsLayout.Controls.Add($checkbox4, 0, 1)
 
 # Option 5: Normalize all quantities to '1'
@@ -2333,12 +2395,12 @@ $checkbox5.Margin = New-Object System.Windows.Forms.Padding(5)
 $toolTip.SetToolTip($checkbox5, "Change all values in 'Add to Quantity' column to '1' (runs after duplication)")
 $optionsLayout.Controls.Add($checkbox5, 1, 1)
 
-# Option 6: Log to File
+# Option 6: Support multiple file formats
 $optionCheckboxes += $checkbox6 = New-Object System.Windows.Forms.CheckBox
-$checkbox6.Text = "Log to File"
+$checkbox6.Text = "All Formats"
 $checkbox6.Dock = "Fill"
 $checkbox6.Margin = New-Object System.Windows.Forms.Padding(5)
-$toolTip.SetToolTip($checkbox6, "Save terminal output to a log file in the application directory")
+$toolTip.SetToolTip($checkbox6, "Process all spreadsheet formats (.xlsx, .xls, .csv)")
 $optionsLayout.Controls.Add($checkbox6, 2, 1)
 
 # Option 7: BLANK - Insert separator rows between spreadsheets
@@ -2357,12 +2419,12 @@ $checkbox8.Margin = New-Object System.Windows.Forms.Padding(5)
 $toolTip.SetToolTip($checkbox8, "Reverse the order of data rows in the final combined spreadsheet")
 $optionsLayout.Controls.Add($checkbox8, 1, 2)
 
-# Option 9: Placeholder
+# Option 9: Log to File
 $optionCheckboxes += $checkbox9 = New-Object System.Windows.Forms.CheckBox
-$checkbox9.Text = "Option 9"
+$checkbox9.Text = "Log to File"
 $checkbox9.Dock = "Fill"
 $checkbox9.Margin = New-Object System.Windows.Forms.Padding(5)
-$toolTip.SetToolTip($checkbox9, "Reserved for future functionality")
+$toolTip.SetToolTip($checkbox9, "Save terminal output to a log file in the application directory")
 $optionsLayout.Controls.Add($checkbox9, 2, 2)
 
 # Output Panel
@@ -2441,6 +2503,36 @@ function Save-Configuration {
         $finalOutputElement = $xmlDoc.CreateElement("FinalOutputLocation")
         $finalOutputElement.InnerText = $finalOutputLocation.Text
         $rootElement.AppendChild($finalOutputElement) | Out-Null
+        
+        # Add Label Folder and Template locations
+        # Create a Labels element to group all label-related settings
+        $labelsElement = $xmlDoc.CreateElement("Labels")
+        $rootElement.AppendChild($labelsElement) | Out-Null
+        
+        # Add Label Input Folder
+        $labelInputElement = $xmlDoc.CreateElement("InputFolder")
+        $labelInputElement.InnerText = $script:LabelInputFolder
+        $labelsElement.AppendChild($labelInputElement) | Out-Null
+        
+        # Add Label Output Folder
+        $labelOutputElement = $xmlDoc.CreateElement("OutputFolder")
+        $labelOutputElement.InnerText = $script:LabelOutputFolder
+        $labelsElement.AppendChild($labelOutputElement) | Out-Null
+        
+        # Add Param Template
+        $paramTemplateElement = $xmlDoc.CreateElement("ParamTemplate")
+        $paramTemplateElement.InnerText = $script:LabelParamTemplate
+        $labelsElement.AppendChild($paramTemplateElement) | Out-Null
+        
+        # Add PRT Template
+        $prtTemplateElement = $xmlDoc.CreateElement("PrtTemplate")
+        $prtTemplateElement.InnerText = $script:LabelPrtTemplate
+        $labelsElement.AppendChild($prtTemplateElement) | Out-Null
+        
+        # Add Dymo Template
+        $dymoTemplateElement = $xmlDoc.CreateElement("DymoTemplate")
+        $dymoTemplateElement.InnerText = $script:LabelDymoTemplate
+        $labelsElement.AppendChild($dymoTemplateElement) | Out-Null
         
         # Add options
         $optionsElement = $xmlDoc.CreateElement("Options")
@@ -2528,6 +2620,37 @@ function Load-Configuration {
             $finalOutputLocation.Text = $finalOutputElement.InnerText
         }
         
+        # Load Label Folder and Template locations
+        # Label Input Folder
+        $labelInputElement = $xmlDoc.SelectSingleNode("//Labels/InputFolder")
+        if ($labelInputElement) {
+            $script:LabelInputFolder = $labelInputElement.InnerText
+        }
+        
+        # Label Output Folder
+        $labelOutputElement = $xmlDoc.SelectSingleNode("//Labels/OutputFolder")
+        if ($labelOutputElement) {
+            $script:LabelOutputFolder = $labelOutputElement.InnerText
+        }
+        
+        # Param Template
+        $paramTemplateElement = $xmlDoc.SelectSingleNode("//Labels/ParamTemplate")
+        if ($paramTemplateElement) {
+            $script:LabelParamTemplate = $paramTemplateElement.InnerText
+        }
+        
+        # PRT Template
+        $prtTemplateElement = $xmlDoc.SelectSingleNode("//Labels/PrtTemplate")
+        if ($prtTemplateElement) {
+            $script:LabelPrtTemplate = $prtTemplateElement.InnerText
+        }
+        
+        # Dymo Template
+        $dymoTemplateElement = $xmlDoc.SelectSingleNode("//Labels/DymoTemplate")
+        if ($dymoTemplateElement) {
+            $script:LabelDymoTemplate = $dymoTemplateElement.InnerText
+        }
+        
         # Load options
         $optionsElement = $xmlDoc.SelectSingleNode("//Options")
         if ($optionsElement) {
@@ -2552,6 +2675,13 @@ function Load-Configuration {
         return $false
     }
 }
+
+# Initialize script variables for label paths
+$script:LabelInputFolder = ""
+$script:LabelOutputFolder = ""
+$script:LabelParamTemplate = ""
+$script:LabelPrtTemplate = ""
+$script:LabelDymoTemplate = ""
 
 # Initialize the form with some sample data for visualization
 Write-Log "Application initialized and ready to run." "Cyan"
