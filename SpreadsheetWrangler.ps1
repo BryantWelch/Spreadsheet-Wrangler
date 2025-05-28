@@ -1937,7 +1937,7 @@ $aboutMenuItem.Add_Click({
     
     # Main about text
     $aboutLabel = New-Object System.Windows.Forms.Label
-    $aboutLabel.Text = "Spreadsheet Wrangler v1.8.2`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
+    $aboutLabel.Text = "Spreadsheet Wrangler v1.8.3`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
     $aboutLabel.AutoSize = $false
     $aboutLabel.Dock = "Fill"
     $aboutLabel.TextAlign = "MiddleCenter"
@@ -2706,7 +2706,7 @@ function Check-ForUpdates {
         Write-Log "Checking for updates..." "Cyan"
         
         # Current version (from the app)
-        $currentVersion = "1.8.2" # This should match the version in the about dialog
+        $currentVersion = "1.8.3" # This should match the version in the about dialog
         
         # Get the latest release info from GitHub API
         $apiUrl = "https://api.github.com/repos/BryantWelch/Spreadsheet-Wrangler/releases/latest"
@@ -2717,7 +2717,7 @@ function Check-ForUpdates {
             "User-Agent" = "PowerShell Script"
         }
         
-        # Extract version number from tag (assuming format like "v1.8.2")
+        # Extract version number from tag (assuming format like "v1.8.3")
         $latestVersion = $response.tag_name -replace 'v', ''
         
         Write-Log "Current version: $currentVersion" "White"
@@ -2809,6 +2809,17 @@ function Update-Application {
             
             # Get the current script path
             $currentScriptPath = $PSCommandPath
+            $scriptDirectory = [System.IO.Path]::GetDirectoryName($currentScriptPath)
+            $vbsPath = [System.IO.Path]::Combine($scriptDirectory, "Launch-SpreadsheetWrangler.vbs")
+            
+            # Determine how to restart - use VBS if it exists, otherwise direct PowerShell
+            $restartCommand = 'start powershell -NoProfile -ExecutionPolicy Bypass -File "' + $currentScriptPath + '"'
+            if (Test-Path $vbsPath) {
+                $restartCommand = 'start "" "' + $vbsPath + '"'
+                Write-Log "Will restart using VBS launcher: $vbsPath" "White"
+            } else {
+                Write-Log "Will restart using PowerShell directly" "White"
+            }
             
             # Create update batch file to replace the script after this process exits
             $batchFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "update_spreadsheet_wrangler.bat")
@@ -2818,7 +2829,7 @@ function Update-Application {
 @echo off
 timeout /t 2 /nobreak > nul
 copy /Y "$tempFile" "$currentScriptPath"
-start powershell -NoProfile -ExecutionPolicy Bypass -File "$currentScriptPath"
+$restartCommand
 del "%~f0"
 exit
 "@
@@ -3100,7 +3111,7 @@ Load-AppSettings
 Update-RecentFilesMenu
 
 # Display welcome and helpful information
-Write-Log "=== Spreadsheet Wrangler v1.8.2 ===" "Cyan"
+Write-Log "=== Spreadsheet Wrangler v1.8.3 ===" "Cyan"
 Write-Log "Application initialized and ready to use." "Green"
 
 # Getting started section
