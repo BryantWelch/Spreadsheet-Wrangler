@@ -65,8 +65,11 @@ function Get-FileNumber {
     return $null
 }
 
-# Global variable for log file path
+# Global variables for application state
 $script:LogFilePath = $null
+$script:RecentFiles = @() # List of recently used configuration files
+$script:MaxRecentFiles = 5 # Maximum number of recent files to track
+$script:AppSettingsFile = Join-Path -Path $PSScriptRoot -ChildPath "SpreadsheetWrangler.settings.xml" # Settings file path
 
 # Function to log messages to the output textbox and optionally to a file
 function Write-Log {
@@ -1863,6 +1866,17 @@ $saveAsConfigMenuItem.Add_Click({
 })
 $fileMenu.DropDownItems.Add($saveAsConfigMenuItem)
 
+# Recent Files submenu
+$recentFilesMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$recentFilesMenuItem.Text = "Recent Files"
+$fileMenu.DropDownItems.Add($recentFilesMenuItem)
+
+# Initialize with empty item (will be updated by Update-RecentFilesMenu)
+$noRecentFilesItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$noRecentFilesItem.Text = "(No recent files)"
+$noRecentFilesItem.Enabled = $false
+$recentFilesMenuItem.DropDownItems.Add($noRecentFilesItem)
+
 # Separator
 $fileMenu.DropDownItems.Add("-")
 
@@ -2606,12 +2620,162 @@ function Save-Configuration {
         # Save the XML document
         $xmlDoc.Save($ConfigPath)
         
+        # Add to recent files list
+        Add-RecentFile -FilePath $ConfigPath
+        
+        # Update the Recent Files menu
+        Update-RecentFilesMenu
+        
         Write-Log "Configuration saved to: $ConfigPath" "Green"
         return $true
     }
     catch {
         Write-Log "Error saving configuration: $_" "Red"
         return $false
+    }
+}
+
+# Function to add a file to the recent files list
+function Add-RecentFile {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath
+    )
+    
+    # Remove the file from the list if it already exists
+    $script:RecentFiles = $script:RecentFiles | Where-Object { $_ -ne $FilePath }
+    
+    # Add the file to the beginning of the list
+    $script:RecentFiles = @($FilePath) + $script:RecentFiles
+    
+    # Trim the list to the maximum number of recent files
+    if ($script:RecentFiles.Count -gt $script:MaxRecentFiles) {
+        $script:RecentFiles = $script:RecentFiles[0..($script:MaxRecentFiles - 1)]
+    }
+    
+    # Save the recent files list to the settings file
+    Save-AppSettings
+}
+
+# Function to save application settings
+function Save-AppSettings {
+    try {
+        # Create XML document
+        $xmlDoc = New-Object System.Xml.XmlDocument
+        $xmlDeclaration = $xmlDoc.CreateXmlDeclaration("1.0", "UTF-8", $null)
+        $xmlDoc.AppendChild($xmlDeclaration) | Out-Null
+        
+        # Create root element
+        $rootElement = $xmlDoc.CreateElement("SpreadsheetWranglerSettings")
+        $xmlDoc.AppendChild($rootElement) | Out-Null
+        
+        # Add recent files
+        $recentFilesElement = $xmlDoc.CreateElement("RecentFiles")
+        $rootElement.AppendChild($recentFilesElement) | Out-Null
+        
+        foreach ($file in $script:RecentFiles) {
+            $fileElement = $xmlDoc.CreateElement("File")
+            $fileElement.InnerText = $file
+            $recentFilesElement.AppendChild($fileElement) | Out-Null
+        }
+        
+        # Save the XML document
+        $xmlDoc.Save($script:AppSettingsFile)
+        return $true
+    }
+    catch {
+        Write-Log "Error saving application settings: $_" "Red"
+        return $false
+    }
+}
+
+# Function to load application settings
+function Load-AppSettings {
+    try {
+        # Check if file exists
+        if (-not (Test-Path -Path $script:AppSettingsFile)) {
+            # No settings file exists yet, that's okay
+            Write-Host "No settings file found at: $($script:AppSettingsFile)" -ForegroundColor Yellow
+            return $true
+        }
+        
+        Write-Host "Loading settings from: $($script:AppSettingsFile)" -ForegroundColor Cyan
+        
+        # Load XML document
+        $xmlDoc = New-Object System.Xml.XmlDocument
+        $xmlDoc.Load($script:AppSettingsFile)
+        
+        # Load recent files
+        $recentFilesElement = $xmlDoc.SelectSingleNode("//RecentFiles")
+        if ($recentFilesElement) {
+            $script:RecentFiles = @()
+            foreach ($fileElement in $recentFilesElement.SelectNodes("File")) {
+                $filePath = $fileElement.InnerText
+                # Only add files that still exist
+                if (Test-Path -Path $filePath) {
+                    Write-Host "  Found recent file: $filePath" -ForegroundColor Green
+                    $script:RecentFiles += $filePath
+                } else {
+                    Write-Host "  Skipping missing file: $filePath" -ForegroundColor Yellow
+                }
+            }
+            
+            Write-Host "Loaded $($script:RecentFiles.Count) recent files" -ForegroundColor Cyan
+        } else {
+            Write-Host "No recent files found in settings" -ForegroundColor Yellow
+        }
+        
+        return $true
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        Write-Host "Error loading application settings: $errorMessage" -ForegroundColor Red
+        # Reset to defaults
+        $script:RecentFiles = @()
+        return $false
+    }
+}
+
+# Function to update the Recent Files menu
+function Update-RecentFilesMenu {
+    # Clear existing items
+    $recentFilesMenuItem.DropDownItems.Clear()
+    
+    if ($script:RecentFiles.Count -eq 0) {
+        # Add a disabled item if there are no recent files
+        $noRecentFilesItem = New-Object System.Windows.Forms.ToolStripMenuItem
+        $noRecentFilesItem.Text = "(No recent files)"
+        $noRecentFilesItem.Enabled = $false
+        $recentFilesMenuItem.DropDownItems.Add($noRecentFilesItem)
+    } else {
+        # Add each recent file to the menu
+        foreach ($file in $script:RecentFiles) {
+            $fileItem = New-Object System.Windows.Forms.ToolStripMenuItem
+            $fileItem.Text = [System.IO.Path]::GetFileName($file)
+            $fileItem.ToolTipText = $file
+            # Store the full path in the Tag property
+            $fileItem.Tag = $file
+            $fileItem.Add_Click({
+                # Use the Tag property to get the file path
+                $clickedItem = $this
+                $configPath = $clickedItem.Tag
+                Write-Host "Loading configuration from recent file: $configPath" -ForegroundColor Cyan
+                Load-Configuration -ConfigPath $configPath
+            })
+            $recentFilesMenuItem.DropDownItems.Add($fileItem)
+        }
+        
+        # Add separator and Clear Recent Files option
+        $recentFilesMenuItem.DropDownItems.Add("-")
+        
+        $clearRecentFilesItem = New-Object System.Windows.Forms.ToolStripMenuItem
+        $clearRecentFilesItem.Text = "Clear Recent Files"
+        $clearRecentFilesItem.Add_Click({
+            $script:RecentFiles = @()
+            Save-AppSettings
+            Update-RecentFilesMenu
+        })
+        $recentFilesMenuItem.DropDownItems.Add($clearRecentFilesItem)
     }
 }
 
@@ -2725,6 +2889,12 @@ function Load-Configuration {
         # Set current config file
         $script:CurrentConfigFile = $ConfigPath
         
+        # Add to recent files list
+        Add-RecentFile -FilePath $ConfigPath
+        
+        # Update the Recent Files menu
+        Update-RecentFilesMenu
+        
         Write-Log "Configuration loaded from: $ConfigPath" "Green"
         return $true
     }
@@ -2741,10 +2911,50 @@ $script:LabelParamTemplate = ""
 $script:LabelPrtTemplate = ""
 $script:LabelDymoTemplate = ""
 
-# Initialize the form with some sample data for visualization
-Write-Log "Application initialized and ready to run." "Cyan"
-Write-Log "Please add backup, spreadsheet, and combined destination folder locations." "White"
-Write-Log "Tip: You can remove locations by selecting them and pressing Delete." "Yellow"
+# Initialize application settings and Recent Files menu
+Write-Log "Loading application settings..." "Cyan"
+Load-AppSettings
+Update-RecentFilesMenu
+
+# Display welcome and helpful information
+Write-Log "=== Spreadsheet Wrangler v1.7.0 ===" "Cyan"
+Write-Log "Application initialized and ready to use." "Green"
+
+# Getting started section
+Write-Log "GETTING STARTED:" "Yellow"
+Write-Log "1. Add backup folders" "White" 
+Write-Log "   Folders to create timestamped backups of" "Gray"
+Write-Log "2. Add spreadsheet folders" "White" 
+Write-Log "   Source folders containing spreadsheets to combine" "Gray"
+Write-Log "3. Set combined destination folder" "White" 
+Write-Log "   Where combined spreadsheets will be saved" "Gray"
+Write-Log "4. Set SKU list location" "White" 
+Write-Log "   Path to the SKU list CSV file for processing" "Gray"
+Write-Log "5. Set final output location" "White" 
+Write-Log "   Where final processed files will be saved" "Gray"
+Write-Log "6. Select options from checkboxes" "White" 
+Write-Log "   Customize how files are processed" "Gray"
+Write-Log "7. Click 'Run' to start" "White"
+
+# Options section
+Write-Log "OPTIONS:" "Yellow"
+Write-Log "- Skip Backup: Skip the backup process" "White"
+Write-Log "- Skip Combine: Skip the spreadsheet combining process" "White"
+Write-Log "- No Headers: Exclude headers when combining spreadsheets" "White"
+Write-Log "- Duplicate by Qty: Duplicate rows based on quantity value" "White"
+Write-Log "- Normalize Qty to 1: Change all quantity values to 1" "White"
+Write-Log "- All Formats: Process multiple spreadsheet formats" "White"
+Write-Log "- BLANK: Insert separator rows between spreadsheets" "White"
+Write-Log "- Reverse, Reverse: Reverse the order of data rows" "White"
+Write-Log "- Log to File: Save terminal output to a log file" "White"
+
+# Tips section
+Write-Log "TIPS:" "Yellow"
+Write-Log "- Save/load settings: File > Save/Open Configuration" "White"
+Write-Log "- Quick access: File > Recent Files" "White"
+Write-Log "- Remove items: Select and press Delete" "White"
+Write-Log "- Create labels: Labels > Create Labels" "White"
+Write-Log "- Button states: Blue (Ready), Yellow (Running), Green (Finished)" "White"
 
 # Show the form
 $form.ShowDialog()
