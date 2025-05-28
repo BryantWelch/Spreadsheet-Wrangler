@@ -2706,7 +2706,7 @@ function Check-ForUpdates {
         Write-Log "Checking for updates..." "Cyan"
         
         # Current version (from the app)
-        $currentVersion = "1.7.0" # This should match the version in the about dialog
+        $currentVersion = "1.8.0" # This should match the version in the about dialog
         
         # Get the latest release info from GitHub API
         $apiUrl = "https://api.github.com/repos/BryantWelch/Spreadsheet-Wrangler/releases/latest"
