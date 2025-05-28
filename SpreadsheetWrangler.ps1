@@ -1903,6 +1903,17 @@ $labelsMenu.DropDownItems.Add($createLabelsMenuItem)
 $helpMenu = New-Object System.Windows.Forms.ToolStripMenuItem
 $helpMenu.Text = "Help"
 
+# Check for Updates
+$checkUpdatesMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$checkUpdatesMenuItem.Text = "Check for Updates"
+$checkUpdatesMenuItem.Add_Click({
+    Check-ForUpdates
+})
+$helpMenu.DropDownItems.Add($checkUpdatesMenuItem)
+
+# Separator
+$helpMenu.DropDownItems.Add("-")
+
 # About
 $aboutMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $aboutMenuItem.Text = "About"
@@ -1926,7 +1937,7 @@ $aboutMenuItem.Add_Click({
     
     # Main about text
     $aboutLabel = New-Object System.Windows.Forms.Label
-    $aboutLabel.Text = "Spreadsheet Wrangler v1.7.0`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
+    $aboutLabel.Text = "Spreadsheet Wrangler v1.8.0`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
     $aboutLabel.AutoSize = $false
     $aboutLabel.Dock = "Fill"
     $aboutLabel.TextAlign = "MiddleCenter"
@@ -2689,6 +2700,178 @@ function Save-AppSettings {
     }
 }
 
+# Function to check for application updates
+function Check-ForUpdates {
+    try {
+        Write-Log "Checking for updates..." "Cyan"
+        
+        # Current version (from the app)
+        $currentVersion = "1.7.0" # This should match the version in the about dialog
+        
+        # Get the latest release info from GitHub API
+        $apiUrl = "https://api.github.com/repos/BryantWelch/Spreadsheet-Wrangler/releases/latest"
+        
+        Write-Log "Connecting to GitHub..." "White"
+        $response = Invoke-RestMethod -Uri $apiUrl -Headers @{
+            "Accept" = "application/vnd.github.v3+json"
+            "User-Agent" = "PowerShell Script"
+        }
+        
+        # Extract version number from tag (assuming format like "v1.8.0")
+        $latestVersion = $response.tag_name -replace 'v', ''
+        
+        Write-Log "Current version: $currentVersion" "White"
+        Write-Log "Latest version: $latestVersion" "White"
+        
+        # Compare versions
+        if ([version]$latestVersion -gt [version]$currentVersion) {
+            # New version available
+            Write-Log "New version available!" "Green"
+            $updatePrompt = [System.Windows.Forms.MessageBox]::Show(
+                "A new version ($latestVersion) is available. Would you like to update now?\n\nChanges in this version:\n$($response.body)",
+                "Update Available",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
+            
+            if ($updatePrompt -eq [System.Windows.Forms.DialogResult]::Yes) {
+                # Download and install update
+                Update-Application -ReleaseInfo $response
+            }
+        } else {
+            # No update needed
+            Write-Log "You are running the latest version." "Green"
+            [System.Windows.Forms.MessageBox]::Show(
+                "You are running the latest version ($currentVersion).",
+                "No Updates Available",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
+        }
+    } catch {
+        $errorMessage = $_.Exception.Message
+        Write-Log "Error checking for updates: $errorMessage" "Red"
+        [System.Windows.Forms.MessageBox]::Show(
+            "Could not check for updates. Please check your internet connection and try again.\n\nError: $errorMessage",
+            "Update Check Failed",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+}
+
+# Function to update the application
+function Update-Application {
+    param (
+        [Parameter(Mandatory=$true)]
+        $ReleaseInfo
+    )
+    
+    try {
+        # Create a progress form
+        $progressForm = New-Object System.Windows.Forms.Form
+        $progressForm.Text = "Updating Spreadsheet Wrangler"
+        $progressForm.Size = New-Object System.Drawing.Size(400, 150)
+        $progressForm.StartPosition = "CenterScreen"
+        $progressForm.FormBorderStyle = "FixedDialog"
+        $progressForm.MaximizeBox = $false
+        $progressForm.MinimizeBox = $false
+        
+        $progressLabel = New-Object System.Windows.Forms.Label
+        $progressLabel.Location = New-Object System.Drawing.Point(10, 20)
+        $progressLabel.Size = New-Object System.Drawing.Size(380, 20)
+        $progressLabel.Text = "Downloading update..."
+        $progressForm.Controls.Add($progressLabel)
+        
+        $progressBar = New-Object System.Windows.Forms.ProgressBar
+        $progressBar.Location = New-Object System.Drawing.Point(10, 50)
+        $progressBar.Size = New-Object System.Drawing.Size(380, 20)
+        $progressBar.Style = "Marquee"
+        $progressForm.Controls.Add($progressBar)
+        
+        # Show the progress form
+        $progressForm.Show()
+        $progressForm.Refresh()
+        
+        # Find the main script asset
+        $asset = $ReleaseInfo.assets | Where-Object { $_.name -eq "SpreadsheetWrangler.ps1" }
+        
+        if ($asset) {
+            # Direct script file download
+            $downloadUrl = $asset.browser_download_url
+            Write-Log "Downloading from: $downloadUrl" "White"
+            
+            # Temporary file for download
+            $tempFile = [System.IO.Path]::GetTempFileName()
+            
+            # Download the file
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile
+            
+            # Get the current script path
+            $currentScriptPath = $PSCommandPath
+            
+            # Create update batch file to replace the script after this process exits
+            $batchFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "update_spreadsheet_wrangler.bat")
+            
+            # Batch file content to wait for process to exit, then copy new file and restart
+            $batchContent = @"
+@echo off
+timeout /t 2 /nobreak > nul
+copy /Y "$tempFile" "$currentScriptPath"
+start powershell -NoProfile -ExecutionPolicy Bypass -File "$currentScriptPath"
+del "%~f0"
+exit
+"@
+            
+            # Write batch file
+            $batchContent | Out-File -FilePath $batchFile -Encoding ascii
+            
+            # Close the progress form
+            $progressForm.Close()
+            
+            # Notify user
+            [System.Windows.Forms.MessageBox]::Show(
+                "Update downloaded. The application will restart to complete the update.",
+                "Update Ready",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
+            
+            # Start the update batch file
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $batchFile" -WindowStyle Hidden
+            
+            # Exit the current instance
+            $form.Close()
+        } else {
+            # No direct script file, try the zip download
+            $progressForm.Close()
+            
+            [System.Windows.Forms.MessageBox]::Show(
+                "No direct script file found in the release. Please download the update manually from GitHub.\n\nURL: $($ReleaseInfo.html_url)",
+                "Manual Update Required",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
+            
+            # Open the release page in the browser
+            Start-Process $ReleaseInfo.html_url
+        }
+    } catch {
+        if ($progressForm -and $progressForm.Visible) {
+            $progressForm.Close()
+        }
+        
+        $errorMessage = $_.Exception.Message
+        Write-Log "Error updating application: $errorMessage" "Red"
+        [System.Windows.Forms.MessageBox]::Show(
+            "Update failed: $errorMessage",
+            "Update Failed",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+}
+
 # Function to load application settings
 function Load-AppSettings {
     try {
@@ -2917,7 +3100,7 @@ Load-AppSettings
 Update-RecentFilesMenu
 
 # Display welcome and helpful information
-Write-Log "=== Spreadsheet Wrangler v1.7.0 ===" "Cyan"
+Write-Log "=== Spreadsheet Wrangler v1.8.0 ===" "Cyan"
 Write-Log "Application initialized and ready to use." "Green"
 
 # Getting started section
