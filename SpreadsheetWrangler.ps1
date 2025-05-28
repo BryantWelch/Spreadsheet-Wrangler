@@ -1419,10 +1419,26 @@ function Create-Labels {
         
         Write-Log "Label creation process completed. Labels saved to: $OutputFolder" "Cyan"
         Update-ProgressBar 100
+        
+        # Update the button state to "Finished!" if it exists
+        if ($script:currentLabelButton) {
+            $script:currentLabelButton.Text = "Finished!"
+            $script:currentLabelButton.BackColor = [System.Drawing.Color]::FromArgb(40, 167, 69) # Green
+            $toolTip.SetToolTip($script:currentLabelButton, "Label creation completed. Click to reset.")
+        }
+        
         return $true
     }
     catch {
         Write-Log "Error during label creation: $_" "Red"
+        
+        # Update the button state to show error if it exists
+        if ($script:currentLabelButton) {
+            $script:currentLabelButton.Text = "Error!"
+            $script:currentLabelButton.BackColor = [System.Drawing.Color]::FromArgb(220, 53, 69) # Red
+            $toolTip.SetToolTip($script:currentLabelButton, "Error during label creation. Click to reset.")
+        }
+        
         return $false
     }
 }
@@ -1648,8 +1664,21 @@ function Show-CreateLabelsDialog {
     $createButton.Text = "Create Labels"
     $createButton.Width = 120
     $createButton.Height = 30
+    $createButton.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215) # Blue
+    $createButton.ForeColor = [System.Drawing.Color]::White
+    $createButton.FlatStyle = "Flat"
     $createButton.Margin = New-Object System.Windows.Forms.Padding(5, 0, 0, 0)
+    $toolTip.SetToolTip($createButton, "Start the label creation process")
     $createButton.Add_Click({
+        # Check if this is a reset from "Finished!" state
+        if ($createButton.Text -eq "Finished!") {
+            # Reset button appearance
+            $createButton.Text = "Create Labels"
+            $createButton.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215) # Blue
+            $toolTip.SetToolTip($createButton, "Start the label creation process")
+            return
+        }
+        
         # Validate inputs
         if ([string]::IsNullOrWhiteSpace($inputFolderTextBox.Text)) {
             [System.Windows.Forms.MessageBox]::Show("Please select an input folder.", "Input Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
@@ -1664,6 +1693,15 @@ function Show-CreateLabelsDialog {
         # Close the dialog
         $labelsForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $labelsForm.Close()
+        
+        # Create a global reference to the button so we can update it from the Create-Labels function
+        $script:currentLabelButton = $createButton
+        
+        # Change button appearance to "Creating..."
+        $createButton.Text = "Creating..."
+        $createButton.BackColor = [System.Drawing.Color]::FromArgb(255, 204, 0) # Yellow/Orange
+        $toolTip.SetToolTip($createButton, "Label creation in progress...")
+        $form.Refresh() # Force UI update
         
         # Start the label creation process
         Create-Labels -InputFolder $inputFolderTextBox.Text -OutputFolder $outputFolderTextBox.Text -ParamTemplate $paramTemplateTextBox.Text -PrtTemplate $prtTemplateTextBox.Text -DymoTemplate $dymoTemplateTextBox.Text
@@ -2170,6 +2208,21 @@ $runBtn.FlatStyle = "Flat"
 $runBtn.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
 $toolTip.SetToolTip($runBtn, "Start the backup and spreadsheet combining process")
 $runBtn.Add_Click({
+    # Check if this is a reset from "Finished!" state
+    if ($runBtn.Text -eq "Finished!") {
+        # Reset button appearance
+        $runBtn.Text = "Run"
+        $runBtn.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215) # Blue
+        $toolTip.SetToolTip($runBtn, "Start the backup and spreadsheet combining process")
+        return
+    }
+    
+    # Change button appearance to "Running..."
+    $runBtn.Text = "Running..."
+    $runBtn.BackColor = [System.Drawing.Color]::FromArgb(255, 204, 0) # Yellow/Orange
+    $toolTip.SetToolTip($runBtn, "Processing in progress...")
+    $form.Refresh() # Force UI update
+    
     # Clear previous output
     $outputTextbox.Clear()
     
@@ -2234,6 +2287,11 @@ $runBtn.Add_Click({
         "--------------------------------------------------------------" | Out-File -FilePath $script:LogFilePath -Append
         "Spreadsheet Wrangler Log - Completed at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath $script:LogFilePath -Append
     }
+    
+    # Change button appearance to "Finished!"
+    $runBtn.Text = "Finished!"
+    $runBtn.BackColor = [System.Drawing.Color]::FromArgb(40, 167, 69) # Green
+    $toolTip.SetToolTip($runBtn, "Operations completed. Click to reset.")
 })
 # SKU List Location Section
 $skuListPanel = New-Object System.Windows.Forms.GroupBox
