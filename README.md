@@ -1,6 +1,9 @@
-# Spreadsheet Wrangler
+<div align="center">
+  <img src="logo.png" alt="Spreadsheet Wrangler Logo" width="200"/>
+  <h1>Spreadsheet Wrangler</h1>
+</div>
 
-[![Version](https://img.shields.io/badge/version-1.8.3-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.8.3)
+[![Version](https://img.shields.io/badge/version-1.8.4-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.8.4)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE.svg)](https://github.com/PowerShell/PowerShell)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/en-us/windows)
