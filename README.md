@@ -1,7 +1,4 @@
-<div align="center">
-  <img src="logo.png" alt="Spreadsheet Wrangler Logo" width="200"/>
-  <h1>Spreadsheet Wrangler</h1>
-</div>
+# Spreadsheet Wrangler
 
 [![Version](https://img.shields.io/badge/version-1.8.4-blue.svg)](https://github.com/BryantWelch/Spreadsheet-Wrangler/releases/tag/v1.8.4)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE.svg)](https://github.com/PowerShell/PowerShell)
