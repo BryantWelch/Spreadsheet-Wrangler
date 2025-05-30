@@ -1782,6 +1782,20 @@ $form.MaximizeBox = $false
 $form.MinimizeBox = $true
 $form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 
+# Set application icon if logo exists
+$logoPath = Join-Path -Path $PSScriptRoot -ChildPath "logo.png"
+if (Test-Path -Path $logoPath) {
+    try {
+        # Load the logo as an icon for the application
+        $logo = [System.Drawing.Image]::FromFile($logoPath)
+        # Create a simple icon from the logo
+        $icon = [System.Drawing.Icon]::FromHandle(($logo.GetThumbnailImage(64, 64, $null, [System.IntPtr]::Zero)).GetHicon())
+        $form.Icon = $icon
+    } catch {
+        Write-Log "Error setting application icon: $_" "Yellow"
+    }
+}
+
 # Create the menu bar
 $menuBar = New-Object System.Windows.Forms.MenuStrip
 $menuBar.BackColor = [System.Drawing.SystemColors]::Control
@@ -1920,7 +1934,8 @@ $aboutMenuItem.Text = "About"
 $aboutMenuItem.Add_Click({
     $aboutForm = New-Object System.Windows.Forms.Form
     $aboutForm.Text = "About Spreadsheet Wrangler"
-    $aboutForm.Size = New-Object System.Drawing.Size(450, 300)
+    # Adjust the size of the About dialog
+    $aboutForm.Size = New-Object System.Drawing.Size(500, 400)
     $aboutForm.StartPosition = "CenterParent"
     $aboutForm.FormBorderStyle = "FixedDialog"
     $aboutForm.MaximizeBox = $false
@@ -1928,12 +1943,36 @@ $aboutMenuItem.Add_Click({
     
     $aboutPanel = New-Object System.Windows.Forms.TableLayoutPanel
     $aboutPanel.Dock = "Fill"
-    $aboutPanel.RowCount = 3
+    $aboutPanel.RowCount = 4
     $aboutPanel.ColumnCount = 1
-    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 60)))
-    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20)))
-    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20)))
+    # Adjust space allocation to reduce gaps
+    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 40)))
+    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 30)))
+    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15)))
+    $aboutPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15)))
     $aboutForm.Controls.Add($aboutPanel)
+    
+    # Logo
+    $logoPanel = New-Object System.Windows.Forms.Panel
+    $logoPanel.Dock = "Fill"
+    # Reduce padding to 10 pixels
+    $logoPanel.Padding = New-Object System.Windows.Forms.Padding(10)
+    $aboutPanel.Controls.Add($logoPanel, 0, 0)
+    
+    # Load the logo image
+    $logoPath = Join-Path -Path $PSScriptRoot -ChildPath "logo.png"
+    if (Test-Path -Path $logoPath) {
+        try {
+            $logoImage = [System.Drawing.Image]::FromFile($logoPath)
+            $logoPictureBox = New-Object System.Windows.Forms.PictureBox
+            $logoPictureBox.Image = $logoImage
+            $logoPictureBox.SizeMode = "Zoom"
+            $logoPictureBox.Dock = "Fill"
+            $logoPanel.Controls.Add($logoPictureBox)
+        } catch {
+            Write-Log "Error loading logo: $_" "Yellow"
+        }
+    }
     
     # Main about text
     $aboutLabel = New-Object System.Windows.Forms.Label
@@ -1941,7 +1980,7 @@ $aboutMenuItem.Add_Click({
     $aboutLabel.AutoSize = $false
     $aboutLabel.Dock = "Fill"
     $aboutLabel.TextAlign = "MiddleCenter"
-    $aboutPanel.Controls.Add($aboutLabel, 0, 0)
+    $aboutPanel.Controls.Add($aboutLabel, 0, 1)
     
     # GitHub link
     $linkLabel = New-Object System.Windows.Forms.LinkLabel
@@ -1955,7 +1994,7 @@ $aboutMenuItem.Add_Click({
         param($sender, $e)
         Start-Process "https://github.com/BryantWelch/Spreadsheet-Wrangler"
     })
-    $aboutPanel.Controls.Add($linkLabel, 0, 1)
+    $aboutPanel.Controls.Add($linkLabel, 0, 2)
     
     # OK button
     $okButton = New-Object System.Windows.Forms.Button
@@ -1963,7 +2002,7 @@ $aboutMenuItem.Add_Click({
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $okButton.Dock = "Fill"
     $okButton.Margin = New-Object System.Windows.Forms.Padding(150, 10, 150, 10)
-    $aboutPanel.Controls.Add($okButton, 0, 2)
+    $aboutPanel.Controls.Add($okButton, 0, 3)
     $aboutForm.AcceptButton = $okButton
     
     $aboutForm.ShowDialog() | Out-Null
