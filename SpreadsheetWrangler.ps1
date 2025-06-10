@@ -546,6 +546,97 @@ function Combine-Spreadsheets {
     }
 }
 
+# Function to process a single spreadsheet with duplication and blank row insertion
+function Process-SingleSpreadsheet {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$SingleFilePath,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationPath
+    )
+
+    Write-Log "Processing single spreadsheet: $SingleFilePath" "Cyan"
+    Update-ProgressBar 0
+
+    try {
+        # Prompt for duplication count
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $duplicationCountInput = [Microsoft.VisualBasic.Interaction]::InputBox("How many times do you want to duplicate the data (including the original)? Enter a number >= 1.", "Duplication Count", "1")
+        
+        if ([string]::IsNullOrWhiteSpace($duplicationCountInput)) {
+            Write-Log "Duplication cancelled by user." "Yellow"
+            # Ensure progress bar is reset if user cancels early
+            Update-ProgressBar 0
+            return $false
+        }
+
+        $duplicationCount = 0
+        if (-not [int]::TryParse($duplicationCountInput, [ref]$duplicationCount) -or $duplicationCount -lt 1) {
+            Write-Log "Invalid duplication count entered. Please enter a number greater than or equal to 1." "Red"
+            Update-ProgressBar 0
+            return $false
+        }
+
+        Write-Log "Data will be duplicated $duplicationCount time(s)." "White"
+
+        # Import the spreadsheet
+        $data = Import-Excel -Path $SingleFilePath -ErrorAction Stop
+        
+        if (-not $data -or $data.Count -eq 0) {
+            Write-Log "No data found in the spreadsheet or spreadsheet is empty: $SingleFilePath" "Red"
+            Update-ProgressBar 0
+            return $false
+        }
+
+        # Get header names from the properties of the first data object
+        $header = $data[0].PSObject.Properties | ForEach-Object { $_.Name }
+        $dataRows = $data # All rows including the first (which Import-Excel uses for property names)
+
+        $processedData = New-Object System.Collections.ArrayList
+
+        $totalIterations = $duplicationCount
+        for ($i = 1; $i -le $totalIterations; $i++) {
+            Write-Log "Processing duplication iteration $i of $totalIterations..." "White"
+            # Add data rows
+            foreach ($row in $dataRows) {
+                [void]$processedData.Add($row.PSObject.Copy()) # Add a copy to avoid issues if modifying objects later
+            }
+
+            # Add two blank rows if not the last iteration
+            if ($i -lt $totalIterations) {
+                Write-Log "  Adding 2 blank rows..." "White"
+                $blankRow = New-Object PSObject
+                foreach ($colName in $header) {
+                    Add-Member -InputObject $blankRow -MemberType NoteProperty -Name $colName -Value "BLANK"
+                }
+                [void]$processedData.Add($blankRow)
+                [void]$processedData.Add($blankRow.PSObject.Copy()) # Add a second, distinct blank row object
+            }
+            Update-ProgressBar ([int](($i / $totalIterations) * 90)) # Progress up to 90% for processing
+        }
+
+        # Save the processed data
+        $baseFileName = [System.IO.Path]::GetFileNameWithoutExtension($SingleFilePath)
+        $fileName = "${baseFileName}_Duplicated.xlsx"
+        $outputFilePath = Join-Path -Path $DestinationPath -ChildPath $fileName
+
+        Write-Log "Saving processed single spreadsheet to: $outputFilePath" "White"
+        $processedData | Export-Excel -Path $outputFilePath -AutoSize -TableName "Data" -ErrorAction Stop
+        
+        Write-Log "Single spreadsheet processing completed successfully: $outputFilePath" "Green"
+        Update-ProgressBar 100
+        return $outputFilePath
+
+    } catch {
+        $errorMessage = $_.Exception.Message
+        Write-Log "Error during single spreadsheet processing: $errorMessage" "Red"
+        Write-Log "Stack Trace: $($_.ScriptStackTrace)" "Red"
+        Update-ProgressBar 100 # Reset progress bar on error, or set to 0 if preferred
+        return $null
+    }
+}
+
 # Function to process SKU list and create GSxx spreadsheets
 function Process-SKUList {
     param (
@@ -973,6 +1064,24 @@ function Process-SKUList {
 
 # Function to start the spreadsheet combining process
 function Start-SpreadsheetCombiningProcess {
+    # Check if Single Spreadsheet option ($optionCheckboxes[9]) is selected
+    if ($optionCheckboxes[9].Checked) {
+        Write-Log "Single Spreadsheet mode selected." "Cyan"
+        if ([string]::IsNullOrWhiteSpace($textBoxSingleSpreadsheetFile.Text) -or -not (Test-Path $textBoxSingleSpreadsheetFile.Text)) {
+            Write-Log "Please select a valid single spreadsheet file." "Red"
+            return $false
+        }
+        if ([string]::IsNullOrWhiteSpace($destinationLocation.Text)) {
+            Write-Log "Please select a combined destination location." "Red"
+            return $false
+        }
+
+        # Call the new function to process the single spreadsheet
+        # This function will be defined elsewhere
+        return Process-SingleSpreadsheet -SingleFilePath $textBoxSingleSpreadsheetFile.Text -DestinationPath $destinationLocation.Text
+    }
+
+    # Original multi-folder logic starts here
     if ($spreadsheetLocations.Items.Count -lt 2) {
         Write-Log "At least two spreadsheet folder locations are required." "Yellow"
         return $false
@@ -994,7 +1103,7 @@ function Start-SpreadsheetCombiningProcess {
     
     # Get options from checkboxes
     $fileExtension = if ($optionCheckboxes[5].Checked) { "*.*" } else { "*.xlsx" }
-    $excludeHeaders = $optionCheckboxes[2].Checked
+    $excludeHeaders = $optionCheckboxes[10].Checked
     $duplicateQuantityTwoRows = $optionCheckboxes[3].Checked
     $normalizeQuantities = $optionCheckboxes[4].Checked
     $insertBlankRows = $optionCheckboxes[6].Checked  # BLANK option (Option 7)
@@ -1774,7 +1883,7 @@ Add-Type -AssemblyName System.Xml.Linq
 # Create the main form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Spreadsheet Wrangler"
-$form.Size = New-Object System.Drawing.Size(900, 850)
+$form.Size = New-Object System.Drawing.Size(900, 870) 
 $form.MinimumSize = New-Object System.Drawing.Size(800, 750)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
@@ -1810,17 +1919,31 @@ $newConfigMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $newConfigMenuItem.Text = "New Configuration"
 $newConfigMenuItem.ShortcutKeys = [System.Windows.Forms.Keys]::Control -bor [System.Windows.Forms.Keys]::N
 $newConfigMenuItem.Add_Click({
-    # Reset all settings
+    Write-Log "Resetting to new configuration." "White"
+    # Clear text fields and list views
     $backupLocations.Items.Clear()
     $spreadsheetLocations.Items.Clear()
     $destinationLocation.Text = ""
+    $skuListLocation.Text = ""
+    $finalOutputLocation.Text = ""
+    $textBoxSingleSpreadsheetFile.Text = ""
     
-    # Reset all checkboxes
+    # Reset script-level variables for label paths
+    $script:LabelInputFolder = ""
+    $script:LabelOutputFolder = ""
+    $script:LabelParamTemplate = ""
+    $script:LabelPrtTemplate = ""
+    $script:LabelDymoTemplate = ""
+
+    # Reset all checkboxes to false
     foreach ($checkbox in $optionCheckboxes) {
         $checkbox.Checked = $false
     }
     
-    Write-Log "Configuration reset to default." "Cyan"
+    # Reset current config file path
+    $script:CurrentConfigFile = $null
+    $form.Text = "Spreadsheet Wrangler"
+    Update-RecentFilesMenu # This will also save app settings if recent files are managed
 })
 $fileMenu.DropDownItems.Add($newConfigMenuItem)
 
@@ -1976,7 +2099,7 @@ $aboutMenuItem.Add_Click({
     
     # Main about text
     $aboutLabel = New-Object System.Windows.Forms.Label
-    $aboutLabel.Text = "Spreadsheet Wrangler v1.8.4`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
+    $aboutLabel.Text = "Spreadsheet Wrangler v1.8.5`n`nA powerful tool for backing up folders and combining spreadsheets.`n`nCreated by Bryant Welch`nCreated: $(Get-Date -Format 'yyyy-MM-dd')`n`n(c) 2025 Bryant Welch. All Rights Reserved"
     $aboutLabel.AutoSize = $false
     $aboutLabel.Dock = "Fill"
     $aboutLabel.TextAlign = "MiddleCenter"
@@ -2222,6 +2345,35 @@ $addSpreadsheetBtn.Add_Click({
 })
 $spreadsheetButtonPanel.Controls.Add($addSpreadsheetBtn)
 
+# --- START: UI Elements for Single Spreadsheet Option ---
+# Textbox for single spreadsheet file path
+$textBoxSingleSpreadsheetFile = New-Object System.Windows.Forms.TextBox
+$textBoxSingleSpreadsheetFile.ReadOnly = $true
+$textBoxSingleSpreadsheetFile.Dock = [System.Windows.Forms.DockStyle]::Fill
+$textBoxSingleSpreadsheetFile.BackColor = [System.Drawing.Color]::White
+$toolTip.SetToolTip($textBoxSingleSpreadsheetFile, "Path to the single spreadsheet file to process")
+$textBoxSingleSpreadsheetFile.Visible = $false # Initially hidden
+$spreadsheetLayout.Controls.Add($textBoxSingleSpreadsheetFile, 0, 0) # Added to layout, will toggle visibility with $spreadsheetLocations
+
+# Browse button for single spreadsheet file
+$buttonBrowseSingleSpreadsheetFile = New-Object System.Windows.Forms.Button
+$buttonBrowseSingleSpreadsheetFile.Text = "Browse..."
+$buttonBrowseSingleSpreadsheetFile.Width = 80 # Standard browse button width
+$buttonBrowseSingleSpreadsheetFile.Height = 25
+$buttonBrowseSingleSpreadsheetFile.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 0) # Consistent margin
+$buttonBrowseSingleSpreadsheetFile.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$toolTip.SetToolTip($buttonBrowseSingleSpreadsheetFile, "Select the single spreadsheet file to process")
+$buttonBrowseSingleSpreadsheetFile.Visible = $false # Initially hidden
+$buttonBrowseSingleSpreadsheetFile.Add_Click({
+    $filePath = Select-FileDialog -Filter "Spreadsheet Files (*.xlsx;*.xls;*.csv)|*.xlsx;*.xls;*.csv|All files (*.*)|*.*" -Title "Select Single Spreadsheet File"
+    if ($filePath) {
+        $textBoxSingleSpreadsheetFile.Text = $filePath
+        Write-Log "Selected single spreadsheet: $filePath"
+    }
+})
+$spreadsheetButtonPanel.Controls.Add($buttonBrowseSingleSpreadsheetFile) # Add to existing button panel
+# --- END: UI Elements for Single Spreadsheet Option ---
+
 # Combined Destination Location Section
 $destinationPanel = New-Object System.Windows.Forms.GroupBox
 $destinationPanel.Text = "Combined Destination Location"
@@ -2323,7 +2475,10 @@ $runBtn.Add_Click({
     
     # Process SKU list if spreadsheet combining was successful (or skipped) and SKU list path is provided
     # When combining is skipped, we still need to have a valid destination location
-    if ($combineSuccess -and -not [string]::IsNullOrWhiteSpace($skuListLocation.Text) -and 
+    # Check if SKU processing should be skipped (checkboxSkipSkuProcessing is $optionCheckboxes[10] as it's the 11th checkbox, 0-indexed)
+    $skipSkuProcessing = $optionCheckboxes[2].Checked
+
+    if (-not $skipSkuProcessing -and $combineSuccess -and -not [string]::IsNullOrWhiteSpace($skuListLocation.Text) -and 
         -not [string]::IsNullOrWhiteSpace($finalOutputLocation.Text) -and 
         (-not $optionCheckboxes[1].Checked -or -not [string]::IsNullOrWhiteSpace($destinationLocation.Text))) {
         Write-Log "Starting SKU list processing..." "Cyan"
@@ -2334,6 +2489,8 @@ $runBtn.Add_Click({
         } else {
             Write-Log "SKU list processing completed with errors." "Red"
         }
+    } elseif ($skipSkuProcessing) {
+        Write-Log "SKU list processing skipped due to 'Skip Sku Processing' option." "Yellow"
     } elseif ($combineSuccess) {
         if ([string]::IsNullOrWhiteSpace($skuListLocation.Text)) {
             Write-Log "SKU list processing skipped - No SKU list file specified." "Yellow"
@@ -2464,14 +2621,15 @@ $rightLayout.Controls.Add($optionsPanel, 0, 0)
 
 $optionsLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $optionsLayout.Dock = "Fill"
-$optionsLayout.RowCount = 3
-$optionsLayout.ColumnCount = 3
-$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
+$optionsLayout.RowCount = 4 # Changed from 3
+$optionsLayout.ColumnCount = 3 # Changed from 4
+$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 25))) # Changed from 33.33
+$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 25))) # Changed from 33.33
+$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 25))) # Changed from 33.33
+$optionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 25))) # Added fourth row
+$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33))) # Changed from 25
+$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33))) # Changed from 25
+$optionsLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33))) # Changed from 25
 $optionsPanel.Controls.Add($optionsLayout)
 
 # Create checkboxes for options with specific functionality
@@ -2479,6 +2637,7 @@ $optionCheckboxes = @()
 
 # Option 1: Skip backup process
 $optionCheckboxes += $checkbox1 = New-Object System.Windows.Forms.CheckBox
+$checkbox1.Name = "checkboxSkipBackup"
 $checkbox1.Text = "Skip Backup"
 $checkbox1.Dock = "Fill"
 $checkbox1.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2487,6 +2646,7 @@ $optionsLayout.Controls.Add($checkbox1, 0, 0)
 
 # Option 2: Skip Combine - Skip the spreadsheet combining process
 $optionCheckboxes += $checkbox2 = New-Object System.Windows.Forms.CheckBox
+$checkbox2.Name = "checkboxSkipCombine"
 $checkbox2.Text = "Skip Combine"
 $checkbox2.Dock = "Fill"
 $checkbox2.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2495,14 +2655,16 @@ $optionsLayout.Controls.Add($checkbox2, 1, 0)
 
 # Option 3: Exclude headers
 $optionCheckboxes += $checkbox3 = New-Object System.Windows.Forms.CheckBox
-$checkbox3.Text = "No Headers"
+$checkbox3.Name = "checkboxSkipSkuProcessing"
+$checkbox3.Text = "Skip Sku Processing"
 $checkbox3.Dock = "Fill"
 $checkbox3.Margin = New-Object System.Windows.Forms.Padding(5)
-$toolTip.SetToolTip($checkbox3, "Exclude headers when combining spreadsheets")
+$toolTip.SetToolTip($checkbox3, "If checked, the SKU list processing step will be skipped.")
 $optionsLayout.Controls.Add($checkbox3, 2, 0)
 
 # Option 4: Duplicate rows based on value in 'Add to Quantity' column
 $optionCheckboxes += $checkbox4 = New-Object System.Windows.Forms.CheckBox
+$checkbox4.Name = "checkboxDuplicateByQty"
 $checkbox4.Text = "Duplicate by Qty"
 $checkbox4.Dock = "Fill"
 $checkbox4.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2511,6 +2673,7 @@ $optionsLayout.Controls.Add($checkbox4, 0, 1)
 
 # Option 5: Normalize all quantities to '1'
 $optionCheckboxes += $checkbox5 = New-Object System.Windows.Forms.CheckBox
+$checkbox5.Name = "checkboxNormalizeQty"
 $checkbox5.Text = "Normalize Qty to 1"
 $checkbox5.Dock = "Fill"
 $checkbox5.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2519,6 +2682,7 @@ $optionsLayout.Controls.Add($checkbox5, 1, 1)
 
 # Option 6: Support multiple file formats
 $optionCheckboxes += $checkbox6 = New-Object System.Windows.Forms.CheckBox
+$checkbox6.Name = "checkboxAllFormats"
 $checkbox6.Text = "All Formats"
 $checkbox6.Dock = "Fill"
 $checkbox6.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2527,6 +2691,7 @@ $optionsLayout.Controls.Add($checkbox6, 2, 1)
 
 # Option 7: BLANK - Insert separator rows between spreadsheets
 $optionCheckboxes += $checkbox7 = New-Object System.Windows.Forms.CheckBox
+$checkbox7.Name = "checkboxBlankSeparator"
 $checkbox7.Text = "BLANK"
 $checkbox7.Dock = "Fill"
 $checkbox7.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2535,6 +2700,7 @@ $optionsLayout.Controls.Add($checkbox7, 0, 2)
 
 # Option 8: Reverse, Reverse - Reverse the order of data rows
 $optionCheckboxes += $checkbox8 = New-Object System.Windows.Forms.CheckBox
+$checkbox8.Name = "checkboxReverseRows"
 $checkbox8.Text = "Reverse, Reverse"
 $checkbox8.Dock = "Fill"
 $checkbox8.Margin = New-Object System.Windows.Forms.Padding(5)
@@ -2543,11 +2709,90 @@ $optionsLayout.Controls.Add($checkbox8, 1, 2)
 
 # Option 9: Log to File
 $optionCheckboxes += $checkbox9 = New-Object System.Windows.Forms.CheckBox
+$checkbox9.Name = "checkboxLogToFile"
 $checkbox9.Text = "Log to File"
 $checkbox9.Dock = "Fill"
 $checkbox9.Margin = New-Object System.Windows.Forms.Padding(5)
 $toolTip.SetToolTip($checkbox9, "Save terminal output to a log file in the application directory")
 $optionsLayout.Controls.Add($checkbox9, 2, 2)
+
+# Option 10: Single Spreadsheet Duplication
+$optionCheckboxes += ($checkbox10 = New-Object System.Windows.Forms.CheckBox)
+$checkbox10.Name = "checkboxSingleSpreadsheet"
+$checkbox10.Text = "Single Spreadsheet"
+$checkbox10.Dock = "Fill"
+$checkbox10.Margin = New-Object System.Windows.Forms.Padding(5)
+$toolTip.SetToolTip($checkbox10, "Enable Single Spreadsheet mode. This changes the UI for spreadsheet selection and disables the 'No Headers' option.")
+$optionsLayout.Controls.Add($checkbox10, 0, 3)
+
+# Option 11: No Headers
+$optionCheckboxes += ($checkboxSkipSkuProcessing = New-Object System.Windows.Forms.CheckBox)
+$checkboxSkipSkuProcessing.Name = "checkboxNoHeaders"
+$checkboxSkipSkuProcessing.Text = "No Headers"
+$checkboxSkipSkuProcessing.Dock = "Fill"
+$checkboxSkipSkuProcessing.Margin = New-Object System.Windows.Forms.Padding(5)
+$toolTip.SetToolTip($checkboxSkipSkuProcessing, "Exclude headers when combining spreadsheets")
+$optionsLayout.Controls.Add($checkboxSkipSkuProcessing, 1, 3)
+
+# Option 12: Reserved for future use
+$optionCheckboxes += $checkbox12 = New-Object System.Windows.Forms.CheckBox
+$checkbox12.Name = "checkboxOption12"
+$checkbox12.Text = "Option 12"
+$checkbox12.Dock = "Fill"
+$checkbox12.Margin = New-Object System.Windows.Forms.Padding(5)
+$toolTip.SetToolTip($checkbox12, "Reserved for future use")
+$optionsLayout.Controls.Add($checkbox12, 2, 3)
+
+# Event handler for Single Spreadsheet checkbox ($checkbox10, which is $optionCheckboxes[9])
+$checkbox10.Add_CheckedChanged({
+    param($sender, $e)
+    if ($sender.Checked) {
+        # Single Spreadsheet mode ENABLED
+        $spreadsheetPanel.Text = "Single Spreadsheet Location:"
+        
+        $spreadsheetLocations.Visible = $false
+        $addSpreadsheetBtn.Visible = $false
+        $removeSpreadsheetBtn.Visible = $false
+        
+        $textBoxSingleSpreadsheetFile.Visible = $true
+        $buttonBrowseSingleSpreadsheetFile.Visible = $true
+        
+        # Disable and uncheck "No Headers" ($optionCheckboxes[10] is $checkboxSkipSkuProcessing)
+        $optionCheckboxes[10].Enabled = $false
+        $optionCheckboxes[10].Checked = $false
+        $toolTip.SetToolTip($optionCheckboxes[10], "No Headers option is not applicable with Single Spreadsheet mode.")
+
+        # Disable and uncheck "BLANK" ($optionCheckboxes[6] is $checkbox7)
+        $optionCheckboxes[6].Enabled = $false
+        $optionCheckboxes[6].Checked = $false
+        $toolTip.SetToolTip($optionCheckboxes[6], "BLANK option is not applicable with Single Spreadsheet mode.")
+
+    } else {
+        # Single Spreadsheet mode DISABLED (Multi-folder mode)
+        $spreadsheetPanel.Text = "Spreadsheet Folder Locations:"
+        
+        $spreadsheetLocations.Visible = $true
+        $addSpreadsheetBtn.Visible = $true
+        $removeSpreadsheetBtn.Visible = $true
+        
+        $textBoxSingleSpreadsheetFile.Visible = $false
+        $buttonBrowseSingleSpreadsheetFile.Visible = $false
+        
+        # Enable "No Headers" ($optionCheckboxes[10] is $checkboxSkipSkuProcessing)
+        $optionCheckboxes[10].Enabled = $true
+        $originalNoHeadersTooltip = "Exclude headers when combining spreadsheets"
+        $toolTip.SetToolTip($optionCheckboxes[10], $originalNoHeadersTooltip)
+
+        # Enable "BLANK" ($optionCheckboxes[6] is $checkbox7)
+        $optionCheckboxes[6].Enabled = $true
+        $originalBlankTooltip = "Insert 'BLANK' rows between data from different spreadsheets"
+        $toolTip.SetToolTip($optionCheckboxes[6], $originalBlankTooltip)
+    }
+})
+
+# Note: The logic to initialize the UI based on $checkbox10.Checked state 
+# (e.g., when loading a configuration) will be handled within the $form.Add_Load event handler.
+# This ensures all controls are created and the form is ready before attempting to modify UI state. 
 
 # Output Panel
 $outputPanel = New-Object System.Windows.Forms.GroupBox
@@ -2661,9 +2906,11 @@ function Save-Configuration {
         $rootElement.AppendChild($optionsElement) | Out-Null
         
         for ($i = 0; $i -lt $optionCheckboxes.Count; $i++) {
-            $optionElement = $xmlDoc.CreateElement("Option")
-            $optionElement.SetAttribute("Index", $i)
-            $optionElement.SetAttribute("Checked", $optionCheckboxes[$i].Checked)
+            $checkbox = $optionCheckboxes[$i]
+            # Use checkbox Name if available and not empty, otherwise use index
+            $elementName = if (-not [string]::IsNullOrWhiteSpace($checkbox.Name)) { $checkbox.Name } else { "Option$($i+1)" }
+            $optionElement = $xmlDoc.CreateElement($elementName)
+            $optionElement.InnerText = $checkbox.Checked
             $optionsElement.AppendChild($optionElement) | Out-Null
         }
         
@@ -2684,6 +2931,7 @@ function Save-Configuration {
         return $false
     }
 }
+
 
 # Function to add a file to the recent files list
 function Add-RecentFile {
@@ -2745,7 +2993,7 @@ function Check-ForUpdates {
         Write-Log "Checking for updates..." "Cyan"
         
         # Current version (from the app)
-        $currentVersion = "1.8.4" # This should match the version in the about dialog
+        $currentVersion = "1.8.5" # This should match the version in the about dialog
         
         # Get the latest release info from GitHub API
         $apiUrl = "https://api.github.com/repos/BryantWelch/Spreadsheet-Wrangler/releases/latest"
@@ -2756,7 +3004,7 @@ function Check-ForUpdates {
             "User-Agent" = "PowerShell Script"
         }
         
-        # Extract version number from tag (assuming format like "v1.8.4")
+        # Extract version number from tag (assuming format like "v1.8.5")
         $latestVersion = $response.tag_name -replace 'v', ''
         
         Write-Log "Current version: $currentVersion" "White"
@@ -3106,15 +3354,22 @@ function Load-Configuration {
             $script:LabelDymoTemplate = $dymoTemplateElement.InnerText
         }
         
-        # Load options
+        # Load options states
         $optionsElement = $xmlDoc.SelectSingleNode("//Options")
         if ($optionsElement) {
-            foreach ($optionElement in $optionsElement.SelectNodes("Option")) {
-                $index = [int]$optionElement.GetAttribute("Index")
-                $checked = [System.Convert]::ToBoolean($optionElement.GetAttribute("Checked"))
-                
-                if ($index -ge 0 -and $index -lt $optionCheckboxes.Count) {
-                    $optionCheckboxes[$index].Checked = $checked
+            for ($i = 0; $i -lt $optionCheckboxes.Count; $i++) {
+                $checkbox = $optionCheckboxes[$i]
+                # Use checkbox Name if available and not empty, otherwise use index for lookup
+                $elementName = if (-not [string]::IsNullOrWhiteSpace($checkbox.Name)) { $checkbox.Name } else { "Option$($i+1)" }
+                $optionNode = $optionsElement.SelectSingleNode($elementName)
+                if ($optionNode) {
+                    $checkbox.Checked = ($optionNode.InnerText -eq 'True')
+                } else {
+                    # Fallback for older config files that might use indexed names like 'Option11'
+                    $fallbackNode = $optionsElement.SelectSingleNode("Option$($i+1)")
+                    if ($fallbackNode) {
+                        $checkbox.Checked = ($fallbackNode.InnerText -eq 'True')
+                    }
                 }
             }
         }
@@ -3150,7 +3405,7 @@ Load-AppSettings
 Update-RecentFilesMenu
 
 # Display welcome and helpful information
-Write-Log "=== Spreadsheet Wrangler v1.8.4 ===" "Cyan"
+Write-Log "=== Spreadsheet Wrangler v1.8.5 ===" "Cyan"
 Write-Log "Application initialized and ready to use." "Green"
 
 # Getting started section
@@ -3180,6 +3435,7 @@ Write-Log "- All Formats: Process multiple spreadsheet formats" "White"
 Write-Log "- BLANK: Insert separator rows between spreadsheets" "White"
 Write-Log "- Reverse, Reverse: Reverse the order of data rows" "White"
 Write-Log "- Log to File: Save terminal output to a log file" "White"
+Write-Log "- Single Spreadsheet: Duplicate the contents of a single spreadsheet" "White"
 
 # Tips section
 Write-Log "TIPS:" "Yellow"
