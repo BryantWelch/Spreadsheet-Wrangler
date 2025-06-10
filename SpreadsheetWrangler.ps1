@@ -221,6 +221,21 @@ function Combine-Spreadsheets {
         # Using ImportExcel module for all operations
         Write-Log "Using ImportExcel module for all operations..." "White"
         
+        # Variables to track handbuilt folder and its spreadsheets
+        $handbuiltFolderPath = $null
+        $handbuiltSpreadsheet = $null
+        $useHandbuiltSingleSpreadsheet = $false
+        
+        # Check if any of the folders is named "handbuilt" (case-insensitive)
+        foreach ($folderPath in $FolderPaths) {
+            $folderName = Split-Path -Path $folderPath -Leaf
+            if ($folderName -match "(?i)handbuilt") {
+                $handbuiltFolderPath = $folderPath
+                Write-Log "Found handbuilt folder: $handbuiltFolderPath" "Cyan"
+                break
+            }
+        }
+        
         # Create a dictionary to store spreadsheets by number
         $spreadsheetGroups = @{}
         
@@ -269,6 +284,30 @@ function Combine-Spreadsheets {
             }
         }
         
+        # Check if handbuilt folder has only one spreadsheet
+        if ($handbuiltFolderPath) {
+            # Get all spreadsheet files in the handbuilt folder
+            $handbuiltFiles = @()
+            
+            if ($FileExtension -eq "*.*") {
+                $handbuiltFiles += Get-ChildItem -Path $handbuiltFolderPath -Filter "*.xlsx" -File
+                $handbuiltFiles += Get-ChildItem -Path $handbuiltFolderPath -Filter "*.xls" -File
+                $handbuiltFiles += Get-ChildItem -Path $handbuiltFolderPath -Filter "*.csv" -File
+            } else {
+                $handbuiltFiles = Get-ChildItem -Path $handbuiltFolderPath -Filter $FileExtension -File
+            }
+            
+            # Check if there's only one spreadsheet in the handbuilt folder
+            if ($handbuiltFiles.Count -eq 1) {
+                $handbuiltSpreadsheet = $handbuiltFiles[0].FullName
+                $useHandbuiltSingleSpreadsheet = $true
+                Write-Log "Handbuilt folder contains only one spreadsheet: $($handbuiltFiles[0].Name)" "Cyan"
+                Write-Log "Will combine this spreadsheet with each spreadsheet group" "Cyan"
+            } else {
+                Write-Log "Handbuilt folder contains $($handbuiltFiles.Count) spreadsheets - using standard grouping logic" "White"
+            }
+        }
+        
         # Check if we found any spreadsheets
         if ($spreadsheetGroups.Count -eq 0) {
             Write-Log "No spreadsheets with matching numbers found in the selected folders." "Yellow"
@@ -288,7 +327,24 @@ function Combine-Spreadsheets {
         foreach ($groupNumber in $spreadsheetGroups.Keys) {
             $files = $spreadsheetGroups[$groupNumber]
             
-            if ($files.Count -lt 2) {
+            # If we have a handbuilt spreadsheet with only one file, add it to all groups
+            if ($useHandbuiltSingleSpreadsheet) {
+                Write-Log "Adding handbuilt spreadsheet to group $groupNumber" "Cyan"
+                
+                # Create a new list with the handbuilt spreadsheet first (to ensure its headers are used)
+                $combinedFiles = New-Object System.Collections.ArrayList
+                $null = $combinedFiles.Add($handbuiltSpreadsheet)
+                
+                # Add all existing files from this group
+                foreach ($file in $files) {
+                    $null = $combinedFiles.Add($file)
+                }
+                
+                # Replace the files array with our new combined list
+                $files = $combinedFiles
+            } 
+            # Skip groups with only one spreadsheet if we're not using handbuilt mode
+            elseif ($files.Count -lt 2) {
                 Write-Log "Skipping group $groupNumber - only one spreadsheet found." "Yellow"
                 continue
             }
@@ -2114,7 +2170,7 @@ $aboutMenuItem.Add_Click({
     $linkLabel.LinkColor = [System.Drawing.Color]::Blue
     $linkLabel.ActiveLinkColor = [System.Drawing.Color]::Red
     $linkLabel.Add_LinkClicked({
-        param($sender, $e)
+        param($senderObj, $e)
         Start-Process "https://github.com/BryantWelch/Spreadsheet-Wrangler"
     })
     $aboutPanel.Controls.Add($linkLabel, 0, 2)
