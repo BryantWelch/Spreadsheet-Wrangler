@@ -2176,8 +2176,8 @@ $leftLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $leftLayout.Dock = "Fill"
 $leftLayout.RowCount = 6
 $leftLayout.ColumnCount = 1
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20))) # Backup
-$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20))) # Spreadsheet
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Backup - adjusted for 1-2 paths
+$leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 25))) # Spreadsheet - adjusted for 3-4 paths
 $leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Combined
 $leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # SKU List
 $leftLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 15))) # Final Output
@@ -2194,7 +2194,7 @@ $backupLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $backupLayout.Dock = "Fill"
 $backupLayout.RowCount = 2
 $backupLayout.ColumnCount = 1
-$backupLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 85)))
+$backupLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 80)))
 $backupLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 35)))
 $backupPanel.Controls.Add($backupLayout)
 
@@ -2202,8 +2202,14 @@ $backupPanel.Controls.Add($backupLayout)
 $backupLocations = New-Object System.Windows.Forms.ListView
 $backupLocations.View = "Details"
 $backupLocations.FullRowSelect = $true
-$backupLocations.Columns.Add("Folder Path", -2)
+$backupLocations.HorizontalScrollbar = $true
+$backupLocations.Scrollable = $true
+$backupLocations.HeaderStyle = "None" # Remove header to save space
+$backupLocations.Columns.Add("Folder Path", 400) # Set explicit width to force horizontal scrollbar
 $backupLocations.Dock = "Fill"
+$backupLocations.MinimumSize = New-Object System.Drawing.Size(0, 50) # Increased minimum height
+
+# Do not auto-resize columns to ensure horizontal scrolling works
 # Set tooltip for backup locations using the tooltip component
 $toolTip.SetToolTip($backupLocations, "List of folders to back up. Select an item and press Delete or use the minus button to remove it.")
 $backupLocations.Add_KeyDown({
@@ -2283,8 +2289,14 @@ $spreadsheetPanel.Controls.Add($spreadsheetLayout)
 $spreadsheetLocations = New-Object System.Windows.Forms.ListView
 $spreadsheetLocations.View = "Details"
 $spreadsheetLocations.FullRowSelect = $true
-$spreadsheetLocations.Columns.Add("Folder Path", -2)
+$spreadsheetLocations.HorizontalScrollbar = $true
+$spreadsheetLocations.Scrollable = $true
+$spreadsheetLocations.HeaderStyle = "None" # Remove header to save space
+$spreadsheetLocations.Columns.Add("Folder Path", 400) # Set explicit width to force horizontal scrollbar
 $spreadsheetLocations.Dock = "Fill"
+$spreadsheetLocations.MinimumSize = New-Object System.Drawing.Size(0, 90) # Maintain minimum height for 3-4 rows
+
+# Do not auto-resize columns to ensure horizontal scrolling works
 # Set tooltip for spreadsheet locations using the tooltip component
 $toolTip.SetToolTip($spreadsheetLocations, "List of folders containing spreadsheets to combine. Select an item and press Delete or use the minus button to remove it.")
 $spreadsheetLocations.Add_KeyDown({
